@@ -9,6 +9,7 @@ Protocol: see the comment block at the top of firmware/scope.c.
 """
 import argparse
 import io
+import json
 import math
 import os
 import struct
@@ -31,6 +32,7 @@ DEFAULT_TYPE = {1: 's8', 2: 's16', 4: 's32'}
 TRIGGERS = {0: 'none (immediate)', 1: 'rising', 2: 'falling'}
 KEEP = 200_000         # stream samples kept for display / CSV
 MAX_POINTS = 4000       # points per series sent to the browser
+CONFIG = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mini-scope.json'))
 
 
 def load_symbols(path):
@@ -237,18 +239,24 @@ def stream_load(rec, period_us, baud):
     return need, have, math.ceil(frame * 1e6 / (0.9 * have))
 
 
-def pick_elf(start_dir):
+def pick_file(start_dir, title, filetypes, save=False):
     """Windows file dialog (the GUI server runs on the same PC as the browser)."""
     import tkinter
     from tkinter import filedialog
     root = tkinter.Tk()
     root.withdraw()
     root.attributes('-topmost', True)       # in front of the browser
-    path = filedialog.askopenfilename(parent=root, title='Select the ELF file of your project',
-                                      initialdir=start_dir,
-                                      filetypes=[('ELF files', '*.elf'), ('All files', '*.*')])
+    if save:
+        path = filedialog.asksaveasfilename(parent=root, title=title, initialdir=start_dir, filetypes=filetypes,
+                                            defaultextension=filetypes[0][1][1:])
+    else:
+        path = filedialog.askopenfilename(parent=root, title=title, initialdir=start_dir, filetypes=filetypes)
     root.destroy()
     return path
+
+
+def pick_elf(start_dir):
+    return pick_file(start_dir, 'Select the ELF file of your project', [('ELF files', '*.elf'), ('All files', '*.*')])
 
 
 def _open_port(name, baud, progress):
@@ -271,7 +279,12 @@ def main_page():
     ports = ([p.device for p in serial.tools.list_ports.comports()]
              + (['SIM'] if ARGS.sim else []) + (['MDB'] if ARGS.mdb else []))
 
-    ui.label('mini-scope').classes('text-2xl font-bold')
+    with ui.row().classes('items-center'):
+        ui.label('mini-scope').classes('text-2xl font-bold mr-4')
+        ui.button('Save', on_click=lambda: save(CONFIG)).props('outline').tooltip(f'Save the settings to {CONFIG}, '
+                                                                                  'loaded at every start')
+        ui.button('Save as ...', on_click=lambda: save_as()).props('outline')
+        ui.button('Load from ...', on_click=lambda: load_from()).props('outline')
 
     # ---- connection and ELF ----
     with ui.row().classes('items-center'):
@@ -334,6 +347,9 @@ def main_page():
                 path = elf.value.strip().strip('"')
                 app['syms'] = load_symbols(path) if path or not ARGS.sim else sim_symbols()
                 elf_info.text = f"{len(app['syms'])} variables"
+                for row in chans + writes:  # addresses move with every rebuild: follow the names
+                    if row['name'] in app['syms']:
+                        row['addr'] = f"0x{app['syms'][row['name']][0]:04X}"
                 channel_list.refresh()
                 write_list.refresh()
             except Exception as e:      # noqa: BLE001
@@ -570,6 +586,77 @@ def main_page():
                        + (f' | lost frames: {sc.lost}' if app['mode'] == 0 else f' | captures: {sc.captures}'))
 
     ui.timer(0.25, refresh)
+
+    # ---- settings file: Save writes mini-scope.json, which is loaded at start ----
+    def settings():
+        return {'port': port.value, 'baud': baud.value, 'elf': elf.value, 'channels': chans, 'writes': writes,
+                'mode': mode.value, 'period': period.value, 'window': window.value,
+                'trigger': {'channel': tch.value, 'edge': ttype.value, 'threshold': level.value,
+                            'pretrigger': pre.value, 'auto_rearm': auto.value}}
+
+    def apply(cfg):
+        if not app['scope']:                    # port and baud are locked while connected
+            if cfg.get('port') in port.options:
+                port.value = cfg['port']
+            baud.value = cfg.get('baud', baud.value)
+        if not (ARGS.sim or ARGS.mdb):          # these modes bring their own ELF
+            elf.value = cfg.get('elf', elf.value)
+        chans[:] = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1, **c} for c in cfg.get('channels', chans)]
+        writes[:] = [{**new_write(), **w} for w in cfg.get('writes', writes)]
+        mode.value = cfg.get('mode', mode.value)
+        period.value = cfg.get('period', period.value)
+        window.value = cfg.get('window', window.value)
+        trig = cfg.get('trigger', {})
+        tch.value = trig.get('channel', tch.value)
+        ttype.value = trig.get('edge', ttype.value)
+        level.value = trig.get('threshold', level.value)
+        pre.value = trig.get('pretrigger', pre.value)
+        auto.value = trig.get('auto_rearm', auto.value)
+        path = elf.value.strip().strip('"')
+        if ARGS.sim or os.path.exists(path):
+            load_elf()                          # variable lists for the channels
+        channel_list.refresh()
+        write_list.refresh()
+
+    def save(path):
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(settings(), f, indent=2)
+            ui.notify(f'Settings saved to {path}', type='positive')
+        except OSError as e:
+            ui.notify(f'Could not save: {e}', type='negative')
+
+    def load(path, quiet=False):
+        try:
+            with open(path, encoding='utf-8') as f:
+                apply(json.load(f))
+            if not quiet:
+                ui.notify(f'Settings loaded from {path}', type='positive')
+        except (OSError, ValueError, TypeError, AttributeError) as e:
+            ui.notify(f'Could not load {path}: {e}', type='negative')
+
+    async def save_as():
+        try:
+            path = await run.io_bound(pick_file, os.path.dirname(CONFIG), 'Save the settings as',
+                                      [('JSON files', '*.json')], True)
+        except Exception as e:      # noqa: BLE001 - e.g. no tkinter in this Python
+            ui.notify(f'File dialog not available: {e}', type='warning')
+            return
+        if path:
+            save(os.path.normpath(path))
+
+    async def load_from():
+        try:
+            path = await run.io_bound(pick_file, os.path.dirname(CONFIG), 'Load settings',
+                                      [('JSON files', '*.json'), ('All files', '*.*')])
+        except Exception as e:      # noqa: BLE001
+            ui.notify(f'File dialog not available: {e}', type='warning')
+            return
+        if path:
+            load(os.path.normpath(path))
+
+    if os.path.exists(CONFIG):
+        load(CONFIG, quiet=True)
 
 
 def sim_symbols():

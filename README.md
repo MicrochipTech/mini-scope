@@ -213,6 +213,9 @@ http://localhost:8080.
    `sine_gain` (sine amplitude, Q15) and `ramp_step` (slope of the ramp)
    show the effect.
 6. **CSV** saves the data shown (comma separated, decimal point).
+7. **Save** (next to the title) stores all settings in `mini-scope.json` in
+   the project folder, which is loaded at every start. **Save as ...** and
+   **Load from ...** use a file of your choice.
 
 Zoom in the chart with the mouse wheel or the slider. Clicking a name in the
 legend hides that channel. **Autoscale** sets the factors so that all channels

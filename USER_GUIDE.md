@@ -88,6 +88,7 @@ From top to bottom the page has these areas:
 
 | Area | Contents |
 |---|---|
+| **Title bar** | **Save**, **Save as ...**, **Load from ...** for the settings |
 | **Connection** | Port, Baud, status line, **Connect** button |
 | **ELF file** | path to the ELF, **Load** button |
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
@@ -226,7 +227,25 @@ change hardware registers. Only write to variables you know.
 recording. The first column is the time in ms; the file is comma separated
 with a decimal point.
 
-### 6.8 Quitting
+### 6.8 Saving the settings
+
+The buttons next to the title keep the whole setup: port, baud rate, ELF
+file, channels, the **Write variable** rows with their values, mode, sample
+period, window and trigger.
+
+- **Save** writes `mini-scope.json` in the project folder. This file is loaded
+  at every start, so the user interface comes up as you left it.
+- **Save as ...** asks for a file name, for example one file per board or per
+  measurement task.
+- **Load from ...** opens a file dialog to pick a `.json` file.
+
+Port and baud rate are only taken over while not connected, and only if the
+port exists on this PC. With `start_sim.bat` the ELF of the simulator stays
+selected. Addresses follow the variable names: when the ELF is loaded, at
+start or with **Load** after a rebuild, every channel and every write row with
+a name gets the variable's current address.
+
+### 6.9 Quitting
 
 Click **Stop**, then close the console window or press Ctrl+C.
 

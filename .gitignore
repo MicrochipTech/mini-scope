@@ -21,3 +21,4 @@ test.X/debug/
 doctor_report.txt
 hw_report.txt
 /*.pdf
+/mini-scope.json
