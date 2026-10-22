@@ -99,13 +99,19 @@ From top to bottom the page has these areas:
 1. Under **Port**, select the adapter's COM port.
 2. Leave **Baud** at 115200 unless the firmware uses a different rate.
 3. Click **Connect**. The status line must show **"connected, target
-   responds"**.
+   responds"**. The button now reads **Disconnect**, and Port and Baud are
+   locked while connected.
+4. **Disconnect** stops a running measurement and releases the COM port, for
+   example to program the board again.
 
 ### 6.2 Select variables
 
-1. Enter the path in **ELF file**, for example
-   `…\MyProject.X\dist\default\production\MyProject.X.production.elf`, and
-   click **Load**. The number of variables found appears next to the button.
+1. Click **Browse …** and select the ELF file of your project in the file
+   dialog. It is usually
+   `…\MyProject.X\dist\default\production\MyProject.X.production.elf`. The
+   file is loaded right away. Alternatively, type or paste the path into
+   **ELF file** and click **Load**. The number of variables found appears next
+   to the buttons.
 2. Click the **Variable** field. A list of all variables with their address
    and size drops down. Typing filters the list.
 3. Click a variable. **Address** and type are filled in automatically.
@@ -141,10 +147,12 @@ Without an ELF file, enter the **Address** directly, for example from the
 
 ![Stream view](docs/stream.png)
 
-To the right of the settings, mini-scope shows whether the UART can carry the
-requested rate. If it says **"→ use Capture"**, the sample rate is too high
-for streaming: samples are dropped and the status line counts the **lost
-frames**. Increase the period or use Capture instead.
+To the right of the settings, mini-scope shows the data rate the stream needs
+and the rate the UART can carry. If the sample period is too short, an orange
+warning appears instead: **"⚠ Too fast for the UART …"**, together with the
+shortest sample period that still fits. Clicking **Start** anyway shows the
+warning again; samples are then dropped and the status line counts the **lost
+frames**. Increase the period, use fewer channels, or use Capture instead.
 
 ### 6.4 Record an event (Capture)
 
@@ -203,6 +211,9 @@ of a few seconds. That is good enough for a functional test. Details are in
 `SIMULATOR.md`.
 
 ## 8. Troubleshooting
+
+The most common problems are listed below. `TROUBLESHOOTING.md` goes through
+all of them step by step, including how to find out the real clock frequency.
 
 | Symptom | Cause and remedy |
 |---|---|

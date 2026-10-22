@@ -29,6 +29,7 @@ Two modes:
 | `start_sim.bat` | builds `test.X` for the simulator and starts the user interface |
 | `USER_GUIDE.md/.pdf` | user guide |
 | `SIMULATOR.md/.pdf` | guide for the simulation without hardware |
+| `TROUBLESHOOTING.md/.pdf` | troubleshooting guide: what to check when it does not work |
 | `test.X` | MPLAB X test project, configurations `default` (PICkit 5) and `sim` (simulator) |
 | `tools/setup_env.bat` | creates the Python environment `.venv` on the first start |
 | `tools/mdb_serial.py` | connects the GUI to the firmware in the MPLAB X simulator |
@@ -135,8 +136,9 @@ to put the environment somewhere else. The browser opens at
 http://localhost:8080.
 
 1. Select the port and click **Connect**. The status line shows whether the
-   target responds.
-2. Enter the path of the ELF file and click **Load**. The ELF is at
+   target responds; the button then reads **Disconnect**.
+2. Click **Browse …** and pick the ELF file, or enter its path and click
+   **Load**. The ELF is at
    `<project>.X\dist\default\production\<project>.X.production.elf`. Then pick
    the variables from a list with address and size; typing filters the list,
    address and width are filled in automatically. Without an ELF, enter the
@@ -148,6 +150,8 @@ http://localhost:8080.
    mode adds trigger channel (number in the channel list, from 0), edge,
    threshold as a raw value and pretrigger. **Auto re-arm** re-arms after
    every capture.
+   In stream mode, an orange warning appears when the sample period is too
+   short for the UART, with the shortest period that still fits.
 5. **CSV** saves the data shown (comma separated, decimal point).
 
 Zoom in the chart with the mouse wheel or the slider. Clicking a name in the

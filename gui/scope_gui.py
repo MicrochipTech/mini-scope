@@ -182,9 +182,37 @@ def open_port(name, baud, progress=None):
     return ser
 
 
+def close_port(ser):
+    ser.close()
+    if ser in OPEN:
+        OPEN.remove(ser)
+
+
 def close_ports():
-    for ser in OPEN:
-        ser.close()
+    for ser in list(OPEN):
+        close_port(ser)
+
+
+def stream_load(rec, period_us, baud):
+    """Bytes/s the stream needs, bytes/s the UART carries, shortest period that fits (90 %)."""
+    frame = rec + 2                         # sync + seq + channels
+    need = frame * 1e6 / max(1, period_us or 1)
+    have = (baud or 1) / 10                 # 8N1: 10 bits per byte
+    return need, have, math.ceil(frame * 1e6 / (0.9 * have))
+
+
+def pick_elf(start_dir):
+    """Windows file dialog (the GUI server runs on the same PC as the browser)."""
+    import tkinter
+    from tkinter import filedialog
+    root = tkinter.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)       # in front of the browser
+    path = filedialog.askopenfilename(parent=root, title='Select the ELF file of your project',
+                                      initialdir=start_dir,
+                                      filetypes=[('ELF files', '*.elf'), ('All files', '*.*')])
+    root.destroy()
+    return path
 
 
 def _open_port(name, baud, progress):
@@ -214,24 +242,44 @@ def main_page():
         baud = ui.number('Baud', value=115200, format='%d').classes('w-32')
         status = ui.label('not connected')
 
+        def set_connected(on):
+            conn_btn.text = 'Disconnect' if on else 'Connect'
+            port.set_enabled(not on)
+            baud.set_enabled(not on)
+            conn_btn.enable()
+
         async def connect():
+            conn_btn.disable()
             status.text = 'connecting ...'
             if port.value == 'MDB':
                 app['progress'] = (0.0, 'Starting simulator ...')
             try:
-                if app['scope']:
-                    old, app['scope'] = app['scope'], None
-                    await run.io_bound(old.stop)
-                    old.ser.close()
                 sc = Scope(await run.io_bound(open_port, port.value, int(baud.value),
                                               lambda f, t: app.update(progress=(f, t))))
-                ok = await run.io_bound(sc.ping)
                 app['scope'] = sc
+                ok = await run.io_bound(sc.ping)
                 status.text = 'connected, target responds' if ok else 'port open, but no answer from target'
             except Exception as e:      # noqa: BLE001 - show any port error in the GUI
                 status.text = f'Error: {e}'
             app['progress'] = None
-        ui.button('Connect', on_click=connect)
+            set_connected(app['scope'] is not None)
+
+        async def disconnect():
+            sc, app['scope'] = app['scope'], None
+            conn_btn.disable()
+            status.text = 'disconnecting ...'
+            try:
+                await run.io_bound(sc.stop)
+            except Exception:           # noqa: BLE001 - the port may already be gone
+                pass
+            await run.io_bound(close_port, sc.ser)
+            status.text = 'not connected'
+            set_connected(False)
+
+        async def connect_or_disconnect():
+            await (disconnect() if app['scope'] else connect())
+
+        conn_btn = ui.button('Connect', on_click=connect_or_disconnect)
 
     with ui.column().classes('w-[40rem] gap-1') as progress_box:     # simulator start-up
         progress_text = ui.label()
@@ -251,6 +299,20 @@ def main_page():
                 channel_list.refresh()
             except Exception as e:      # noqa: BLE001
                 elf_info.text = f'Error: {e}'
+
+        async def browse():
+            current = elf.value.strip().strip('"')
+            start = os.path.dirname(current) if current and os.path.isdir(os.path.dirname(current)) else os.getcwd()
+            try:
+                path = await run.io_bound(pick_elf, start)
+            except Exception as e:      # noqa: BLE001 - e.g. no tkinter in this Python
+                ui.notify(f'File dialog not available: {e}', type='warning')
+                return
+            if path:
+                elf.value = os.path.normpath(path)
+                load_elf()
+
+        ui.button('Browse ...', on_click=browse).props('outline')
         ui.button('Load', on_click=load_elf)
 
     # ---- channels ----
@@ -312,6 +374,11 @@ def main_page():
         if mode.value and (trig >= len(sel) or sel[trig][1] == 'f32'):
             ui.notify('Trigger channel missing or f32', type='warning')
             return
+        rec = sum(np.dtype(TYPES[s[1]]).itemsize for s in sel)
+        need, have, min_us = stream_load(rec, period.value, baud.value)
+        if mode.value == 0 and need >= 0.9 * have:
+            ui.notify(f'Sample period too short for streaming: samples will be lost. '
+                      f'Use at least {min_us} µs or Capture.', type='warning', timeout=8000)
         app['names'], app['factors'] = [s[2] for s in sel], [s[3] for s in sel]
         app['mode'], app['period'] = int(mode.value), int(period.value)
         err = await run.io_bound(sc.start, [s[:2] for s in sel], int(mode.value), int(period.value),
@@ -358,11 +425,17 @@ def main_page():
         sel = selected()
         rec = sum(np.dtype(TYPES[s[1]]).itemsize for s in sel)
         if rec:
-            need = (rec + 2) * 1e6 / max(1, period.value or 1)
-            have = (baud.value or 1) / 10
-            rate.text = (f'Stream needs {need / 1000:.1f} kB/s, UART carries {have / 1000:.1f} kB/s'
-                         + ('' if need < 0.9 * have else ' → use Capture')
-                         + (f' | capture depth {app["scope"].capbuf // rec} samples' if app['scope'] else ''))
+            need, have, min_us = stream_load(rec, period.value, baud.value)
+            depth = f' | capture depth {app["scope"].capbuf // rec} samples' if app['scope'] else ''
+            if mode.value == 0 and need >= 0.9 * have:
+                rate.text = (f'⚠ Too fast for the UART: the stream needs {need / 1000:.1f} kB/s, the UART '
+                             f'carries {have / 1000:.1f} kB/s. Samples will be lost. Use a sample period '
+                             f'of at least {min_us} µs, fewer channels, or Capture.')
+                rate.classes(replace='text-orange-400 font-bold')
+            else:
+                rate.text = (f'Stream needs {need / 1000:.1f} kB/s, UART carries {have / 1000:.1f} kB/s{depth}'
+                             if mode.value == 0 else depth.lstrip(' |'))
+                rate.classes(replace='')
         sc = app['scope']
         if not sc or 'names' not in app:
             return
