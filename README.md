@@ -33,6 +33,9 @@ Two modes:
 | `test.X` | MPLAB X test project, configurations `default` (PICkit 5) and `sim` (simulator) |
 | `tools/setup_env.bat` | creates the Python environment `.venv` on the first start |
 | `tools/mdb_serial.py` | connects the GUI to the firmware in the MPLAB X simulator |
+| `tools/doctor.py` | checks the PC and the project settings, writes `doctor_report.txt` |
+| `tools/hw_check.py` | checks mini-scope on the board (ping, clock, rates, capture, reset), writes `hw_report.txt` |
+| `CLAUDE.md` | notes for Claude Code, for help with getting mini-scope running on your board |
 | `tests/` | PC model: `scope.c` built as a DLL, plus a protocol test |
 | `LICENSE.txt` | license |
 
@@ -246,7 +249,7 @@ modelled registers as a DLL. Data arrives in real time.
 ```
 gcc -O2 -shared -Itests/mock -Ifirmware -o tests/sim.dll tests/mock/sim.c firmware/scope.c
 start_gui.bat --sim                      (port "SIM", leave the ELF field empty, Load)
-.venv\Scripts\python tests\test_protocol.py   (21 automatic checks)
+.venv\Scripts\python tests\test_protocol.py   (23 automatic checks)
 ```
 
 The paths to MPLAB X v6.35, XC-DSC v3.30 and the DFP are at the top of

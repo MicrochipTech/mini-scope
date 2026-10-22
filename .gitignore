@@ -18,3 +18,5 @@ test.X/debug/
 
 # Python environment created by tools/setup_env.bat
 .venv/
+doctor_report.txt
+hw_report.txt

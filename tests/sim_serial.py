@@ -27,7 +27,7 @@ class SimSerial:
         ticks = int((now - self.t_last) * 1e6 / per) if per > 0 else 0
         if per > 0 and ticks == 0:
             return
-        self.t_last = now
+        self.t_last = self.t_last + ticks * per * 1e-6 if per > 0 else now    # keep the started tick
         n = self.lib.sim_run(min(ticks, 200000), self.cbuf, len(self.cbuf))
         self.buf += self.cbuf.raw[:n]
 

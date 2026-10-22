@@ -1,0 +1,21 @@
+/* stylesheet for the PDF guides, see tools/make_pdfs.py */
+@page { size: A4; margin: 16mm 14mm; }
+html, body { max-width: none; margin: 0; padding: 0; }
+body { font-family: "Segoe UI", sans-serif; font-size: 10pt; line-height: 1.4; color: #222; }
+header { border-bottom: 2px solid #c00000; margin-bottom: 1.4em; padding-bottom: 0.5em; }
+h1.title { font-size: 18pt; margin: 0 0 0.2em; }
+p.subtitle { font-size: 12pt; color: #555; margin: 0; }
+p.date { color: #777; margin: 0.3em 0 0; }
+h2, h3 { color: #c00000; page-break-after: avoid; }
+h2 { font-size: 13pt; margin: 1.2em 0 0.4em; }
+h3 { font-size: 11.5pt; margin: 1.2em 0 0.4em; }
+code { font-family: Consolas, monospace; font-size: 0.92em; background: #f2f2f2; padding: 0 0.2em; border-radius: 2px; }
+pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.6em 0.8em; white-space: pre-wrap; page-break-inside: avoid; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 0.6em 0 1em; font-size: 0.95em; }
+th, td { border: 1px solid #ccc; padding: 2px 6px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+tr { page-break-inside: avoid; }
+img { max-width: 100%; page-break-inside: avoid; }
+a { color: #0563c1; }
+p, ul, ol { margin: 0.5em 0; }

@@ -4,6 +4,17 @@ subtitle: "Finding the cause when mini-scope does not work on your board"
 date: "October 22, 2026"
 ---
 
+Two scripts do most of the checking for you. Run them from the project
+folder (start `start_gui.bat` once before, it creates `.venv`):
+
+```
+.venv\Scripts\python tools\doctor.py                 PC and project settings, no board needed
+.venv\Scripts\python tools\hw_check.py --port COM5   the board (disconnect the GUI first)
+```
+
+Each FAIL or WARN names the section below to read. `hw_check.py --loopback`
+checks the USB-UART adapter alone, with its TX and RX bridged.
+
 ## 1. Before the first start
 
 Most problems come from one of these points. Check them first:
@@ -158,12 +169,13 @@ Problems with `start_sim.bat` and the MPLAB X simulator are covered in
 
 Please send the following:
 
-1. The text of the status line and of any error message, or a screenshot.
-2. The settings at the top of `scope.h` that you changed.
-3. Your clock setup (configuration bits `FNOSC`, `FWDTEN`, `ICS` and the
+1. `doctor_report.txt` and `hw_report.txt` (see the top of this guide).
+2. The text of the status line and of any error message, or a screenshot.
+3. The settings at the top of `scope.h` that you changed.
+4. Your clock setup (configuration bits `FNOSC`, `FWDTEN`, `ICS` and the
    PLL code).
-4. Which UART, timers and PPS assignments your application uses.
-5. For build errors: the build output. For `start_sim.bat`:
+5. Which UART, timers and PPS assignments your application uses.
+6. For build errors: the build output. For `start_sim.bat`:
    `test.X\build_sim.log`.
-6. For wrong values: the CSV export and the type of the variable in your
+7. For wrong values: the CSV export and the type of the variable in your
    code.
