@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# PC simulation (build with gcc, see README)
+tests/sim.dll
+
+# MPLAB X: build output and generated files (start_sim.bat regenerates them)
+test.X/build/
+test.X/dist/
+test.X/.generated_files/
+test.X/nbproject/private/
+test.X/nbproject/Makefile-*.mk
+test.X/nbproject/Makefile-genesis.properties
+test.X/build_sim.log
+test.X/debug/
+*.log
+
+# Python environment created by tools/setup_env.bat
+.venv/

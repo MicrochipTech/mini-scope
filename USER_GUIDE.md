@@ -1,0 +1,231 @@
+---
+title: "mini-scope – User Guide"
+subtitle: "Watch and record dsPIC33CK variables live, without halting the CPU"
+date: "October 22, 2026"
+---
+
+## 1. What is mini-scope for?
+
+A debugger has to halt the CPU to read variables, which is harmful in a motor
+control application. mini-scope reads the variables while the application
+keeps running: a small module in the controller samples the selected
+variables at a fixed rate and sends them over a UART to the PC, where they are
+shown as curves in the browser.
+
+There are two modes:
+
+- **Stream:** continuous display, like a chart recorder. Suited to slow
+  signals such as speed, temperature or states.
+- **Capture:** records a short time window at any sample rate, started by a
+  trigger such as a current rise or a fault. Works like a storage
+  oscilloscope.
+
+## 2. What you need
+
+| Item | Purpose |
+|---|---|
+| Python 3.9 or later | PC user interface; the first start installs everything else |
+| USB-UART adapter, 3.3 V, 115200 baud | connection to the board, galvanically isolated if possible |
+| `scope.c` and `scope.h` in the firmware project | module in the controller |
+| the project's ELF file | lets you pick variables by name |
+
+It also works without hardware, see [section 7](#simulation-without-hardware).
+
+## 3. Preparing the firmware
+
+1. Add `firmware\scope.c` and `firmware\scope.h` to the MPLAB X project.
+2. Call `scope_init();` once in `main()`, after the clock and pin setup.
+   `scope_init()` configures PPS, UART, timer and interrupts. Nothing else is
+   needed.
+3. If your application already uses UART1 or Timer1, select a free one at
+   the top of `scope.h`: `SCOPE_UART` 1, 2 or 3, and `SCOPE_TIMER`
+   `SCOPE_T1`, `SCOPE_CCP1` … `SCOPE_CCP4` or `SCOPE_NONE`. The pins stay
+   RB5/RB6.
+4. If RAM is tight, reduce the buffers in `scope.h`. By default mini-scope
+   uses about 4.7 KB. With `SCOPE_CAPBUF 1024u`, `SCOPE_TXBUF 256u` and
+   `SCOPE_MAX_CH 8` it uses about 1.4 KB. The full table is in `README.md`.
+   The user interface adapts automatically.
+5. Check the peripheral clock: `SCOPE_FP_HZ` in `scope.h` must equal FOSC/2.
+   The default is 32 MHz.
+6. Build and program.
+
+All settings are described in `README.md`.
+
+## 4. Connecting
+
+By default the data runs over the **ICSP header**: TX on PGD (RB5), RX on PGC
+(RB6).
+
+1. Program the firmware with the PICkit, then **disconnect the PICkit**.
+2. Connect the USB-UART adapter to the ICSP header:
+
+| ICSP pin | Signal | Adapter |
+|---|---|---|
+| 3 | GND | GND |
+| 4 | PGD = TX from the controller | RX |
+| 5 | PGC = RX to the controller | TX |
+| 2 | 3V3 | **do not** connect |
+
+3. Power the board from its own supply.
+
+Debugging and mini-scope cannot run at the same time, because both use the
+same pins.
+
+## 5. Starting the user interface
+
+Double-click **`start_gui.bat`**.
+
+On the first start it looks for Python 3.9 or later, creates a Python
+environment `.venv` in the project folder and installs the required packages.
+This takes about a minute and needs internet access (behind a proxy, set
+`HTTPS_PROXY` first). Later starts take a few seconds. The browser opens at
+http://localhost:8080.
+
+From top to bottom the page has these areas:
+
+| Area | Contents |
+|---|---|
+| **Connection** | Port, Baud, status line, **Connect** button |
+| **ELF file** | path to the ELF, **Load** button |
+| **Channels** | one row per variable: Variable, Address, type, Factor, delete |
+| **Settings** | Stream or Capture, Sample period, trigger |
+| **Buttons** | **Start**, **Stop**, **CSV** |
+| **Chart** | curves, legend, zoom slider |
+
+## 6. Step by step
+
+### 6.1 Connect
+
+1. Under **Port**, select the adapter's COM port.
+2. Leave **Baud** at 115200 unless the firmware uses a different rate.
+3. Click **Connect**. The status line must show **"connected, target
+   responds"**.
+
+### 6.2 Select variables
+
+1. Enter the path in **ELF file**, for example
+   `…\MyProject.X\dist\default\production\MyProject.X.production.elf`, and
+   click **Load**. The number of variables found appears next to the button.
+2. Click the **Variable** field. A list of all variables with their address
+   and size drops down. Typing filters the list.
+3. Click a variable. **Address** and type are filled in automatically.
+4. Add more variables with **+ Channel**, remove them with the trash can.
+
+![Selecting variables after loading the ELF](docs/variables.png)
+
+The **type** defines how the bytes are read:
+
+| Type | Meaning |
+|---|---|
+| `s8`, `s16`, `s32` | signed, for example `int16_t` |
+| `u8`, `u16`, `u32` | unsigned, for example `uint16_t` |
+| `f32` | `float` |
+
+A signed type is suggested. For `unsigned` variables, change it to `u…` by
+hand.
+
+**Factor** multiplies the value for display. Use it to convert to physical
+units, for example Q15 to amperes, or to bring signals of different magnitude
+onto one scale. The factor only affects the display and the CSV export, not
+the trigger.
+
+Without an ELF file, enter the **Address** directly, for example from the
+`.map` file, and choose the type by hand.
+
+### 6.3 Watch values continuously (Stream)
+
+1. Select **Stream**.
+2. Enter the **Sample period µs**, for example 1000 for 1 kHz.
+3. Set **Window (samples)** to the number of samples to show.
+4. Click **Start**.
+
+![Stream view](docs/stream.png)
+
+To the right of the settings, mini-scope shows whether the UART can carry the
+requested rate. If it says **"→ use Capture"**, the sample rate is too high
+for streaming: samples are dropped and the status line counts the **lost
+frames**. Increase the period or use Capture instead.
+
+### 6.4 Record an event (Capture)
+
+1. Select **Capture**.
+2. Enter the **Sample period µs**. A few µs are possible here.
+3. Set up the trigger:
+   - **Trigger channel:** number of the channel in the list, the first one is
+     0.
+   - **Edge:** rising, falling or none. "None" records immediately.
+   - **Threshold (raw):** a **raw value**, without the factor.
+   - **Pretrigger %:** how much of the recording lies before the trigger.
+   - **Auto re-arm:** when checked, the trigger is re-armed after every
+     recording. Unchecked, you get exactly one recording.
+4. Click **Start**. As soon as the condition occurs, the recording appears.
+   The trigger point is at **0 ms**.
+
+![Capture on a rising edge through 0, 20 % pretrigger](docs/capture.png)
+
+The recording length is the capture buffer (4 KB by default) divided by the
+bytes per sample. It is shown to the right of the settings as **capture
+depth**. Fewer channels mean a longer recording.
+
+### 6.5 Working with the chart
+
+- **Zoom:** mouse wheel in the chart, or drag the slider below it.
+- **Hide a channel:** click its name in the legend.
+- **Read values:** hover over the curve.
+
+### 6.6 Saving data
+
+**CSV** saves the data currently shown, that is the stream window or the last
+recording. The first column is the time in ms; the file is comma separated
+with a decimal point.
+
+### 6.7 Quitting
+
+Click **Stop**, then close the console window or press Ctrl+C.
+
+## 7. Simulation without hardware {#simulation-without-hardware}
+
+Double-click **`start_sim.bat`**. It builds the test project `test.X` for the
+simulator and starts the user interface.
+
+1. Port **MDB** is preselected. Click **Connect**.
+2. Wait until the progress bar has finished, typically 40–60 s. During this
+   time MPLAB X starts the simulator in the background and loads the
+   firmware.
+3. Click **Load**. The ELF path is already filled in.
+4. Select variables, for example `sine` and `ramp`, then continue as in
+   section 6.
+
+![Progress bar while the simulator starts](docs/simulator_start.png)
+
+The simulator runs much slower than real time, and data appears with a delay
+of a few seconds. That is good enough for a functional test. Details are in
+`SIMULATOR.md`.
+
+## 8. Troubleshooting
+
+| Symptom | Cause and remedy |
+|---|---|
+| "Python 3.9 or newer was not found" | install Python from python.org with "Add python.exe to PATH" ticked |
+| "Package installation failed" | no internet access, or a proxy: set `HTTPS_PROXY=http://proxy:port` and start again |
+| "port open, but no answer from target" | RX and TX swapped, wrong baud rate, `scope_init()` not called, or `SCOPE_FP_HZ` does not match the clock |
+| Port missing from the list | plug in the adapter and reload the page (F5) |
+| "Target rejected the configuration" | too many channels (`SCOPE_MAX_CH`, default 16) or an odd address on a 16- or 32-bit channel |
+| Curves jump, lost frames increase | stream too fast: increase the period or use Capture |
+| No capture appears | the trigger condition never occurs: check the threshold as a raw value, or try edge "none" |
+| Values look wrong | wrong type, for example `s16` instead of `u16`, or `s32` instead of `f32` |
+| Variables no longer match after rebuilding the firmware | **Load** the ELF again, the addresses may have moved |
+| Linker error `multiple definition of _T1Interrupt` (or `_U1RXInterrupt` …) | the application already uses this timer or UART: select another one in `scope.h` |
+| Simulator: progress stalls for more than 90 s | close the console window and run `start_sim.bat` again |
+
+## 9. Good to know
+
+- 32-bit values are read in two steps. If a higher-priority interrupt writes
+  the variable in between, a single value can be wrong.
+- If your code updates a variable in several steps (first set, then
+  correct), mini-scope may catch the intermediate value. Compute the value in
+  a local variable first and write it with a single assignment.
+- With very short sample periods, every sample costs an interrupt. In a motor
+  control application, set `SCOPE_TIMER = SCOPE_NONE` and call
+  `scope_sample()` at the end of the control ISR. Sampling is then
+  synchronous to the PWM.
