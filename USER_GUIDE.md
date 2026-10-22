@@ -91,7 +91,7 @@ From top to bottom the page has these areas:
 | **Connection** | Port, Baud, status line, **Connect** button |
 | **ELF file** | path to the ELF, **Load** button |
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
-| **Write variable** | pick a variable (or enter an address), then type a value into the window that opens |
+| **Write variable** | next to the channels: one row per variable: Variable, Address, type, Value, write, delete |
 | **Settings** | Stream or Capture, Sample period, trigger |
 | **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV** |
 | **Chart** | curves, legend, zoom slider |
@@ -196,13 +196,14 @@ depth**. Fewer channels mean a longer recording.
 You can write a new value into a variable while the application runs, also
 during a measurement, for example a gain or a set point.
 
-1. Under **Write variable**, pick the variable from the list. Without an ELF,
-   enter its address under **or address** and click **Write ...**.
-2. A window opens. Check the **Type** (`s16` for `int16_t`, `u16` for
-   `uint16_t`, `f32` for `float` and so on), enter the **Value** and click
-   **Write** or press Enter.
-3. The window stays open, so you can try several values one after the other.
-   **Close** closes it.
+1. Under **Write variable** (next to **Channels**), pick the variable from
+   the list, as for a channel. Without an ELF, enter its address.
+2. Check the type (`s16` for `int16_t`, `u16` for `uint16_t`, `f32` for
+   `float` and so on) and enter the **Value**.
+3. Press Enter in the value field, or click the arrow next to it. You can
+   change the value and write again as often as you like.
+4. **+ Variable** adds a row, so several variables are at hand at the same
+   time; the bin removes a row.
 
 The value is raw, without the channel factor. The target does not answer the
 write; you see the effect in the curves. Values out of range for the type, and

@@ -207,9 +207,9 @@ http://localhost:8080.
    every capture.
    In stream mode, an orange warning appears when the sample period is too
    short for the UART, with the shortest period that still fits.
-5. **Write variable:** pick a variable, or enter an address, and type a
-   value into the window that opens. The value is written into the
-   controller at once, also during a measurement. The demo variables
+5. **Write variable** (next to the channels): one row per variable, set up
+   like a channel, with a value field. Enter or the arrow writes the value
+   into the controller at once, also during a measurement. The demo variables
    `sine_gain` (sine amplitude, Q15) and `ramp_step` (slope of the ramp)
    show the effect.
 6. **CSV** saves the data shown (comma separated, decimal point).

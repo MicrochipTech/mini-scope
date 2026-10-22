@@ -264,8 +264,10 @@ def _open_port(name, baud, progress):
 
 
 def main_page():
-    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'written': {}}
+    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None}
     chans = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1}]
+    new_write = lambda: {'name': '', 'addr': '', 'type': 's16', 'value': None}    # noqa: E731
+    writes = [new_write()]
     ports = ([p.device for p in serial.tools.list_ports.comports()]
              + (['SIM'] if ARGS.sim else []) + (['MDB'] if ARGS.mdb else []))
 
@@ -333,7 +335,7 @@ def main_page():
                 app['syms'] = load_symbols(path) if path or not ARGS.sim else sim_symbols()
                 elf_info.text = f"{len(app['syms'])} variables"
                 channel_list.refresh()
-                write_row.refresh()
+                write_list.refresh()
             except Exception as e:      # noqa: BLE001
                 elf_info.text = f'Error: {e}'
 
@@ -376,59 +378,52 @@ def main_page():
         ui.button('+ Channel', on_click=lambda: (chans.append({'name': '', 'addr': '', 'type': 's16', 'factor': 1}),
                                                channel_list.refresh())).props('flat')
 
-    with ui.card().classes('w-full'):
-        ui.label('Channels').classes('font-bold')
-        channel_list()
-
-    # ---- write variables ----
-    def open_write(name, addr, typ):
-        async def do_write():
-            if not app['scope']:
-                ui.notify('Connect first', type='warning')
-                return
-            if value.value is None:
-                return
-            err = await run.io_bound(app['scope'].write, addr, wtype.value, value.value)
-            if err:
-                ui.notify(err, type='negative')
-            else:
-                app['written'][addr] = value.value
-                ui.notify(f'{name} = {value.value:g}', type='positive')
-
-        with ui.dialog() as dlg, ui.card():
-            ui.label(f'Write {name}  (0x{addr:04X})').classes('font-bold')
-            with ui.row().classes('items-center'):
-                wtype = ui.select(list(TYPES), value=typ, label='Type').classes('w-24')
-                value = ui.number('Value', value=app['written'].get(addr)).classes('w-40')                     .on('keydown.enter', do_write)
-            with ui.row():
-                ui.button('Write', on_click=do_write)
-                ui.button('Close', on_click=dlg.close).props('outline')
-        dlg.on_value_change(lambda e: None if e.value else dlg.delete())
-        dlg.open()
+    # ---- write variables: same rows as the channels, plus a value ----
+    async def write(w):
+        if not app['scope']:
+            ui.notify('Connect first', type='warning')
+            return
+        try:
+            addr = int(w['addr'], 0)
+        except ValueError:
+            ui.notify('Enter an address such as 0x1234', type='warning')
+            return
+        if w['value'] is None:
+            return
+        err = await run.io_bound(app['scope'].write, addr, w['type'], w['value'])
+        ui.notify(err or f"{w['name'] or w['addr']} = {w['value']:g}", type='negative' if err else 'positive')
 
     @ui.refreshable
-    def write_row():
-        with ui.row().classes('items-center'):
-            def pick(e):
-                if e.value in app['syms']:
-                    a, size = app['syms'][e.value]
-                    e.sender.value = None           # the same variable can be picked again
-                    open_write(e.value, a, DEFAULT_TYPE[size])
-            if app['syms']:
-                ui.select({n: f'{n}  (0x{a:04X}, {s} B)' for n, (a, s) in app['syms'].items()},
-                          label='Variable', with_input=True, on_change=pick).classes('w-72')
-            addr = ui.input('or address').classes('w-28')
+    def write_list():
+        for w in writes:
+            with ui.row().classes('items-center'):
+                def pick(e, w=w):
+                    if e.value in app['syms']:
+                        a, size = app['syms'][e.value]
+                        w.update(name=e.value, addr=f'0x{a:04X}', type=DEFAULT_TYPE[size])
+                        write_list.refresh()
+                if app['syms']:
+                    ui.select({n: f'{n}  (0x{a:04X}, {s} B)' for n, (a, s) in app['syms'].items()},
+                              value=w['name'] if w['name'] in app['syms'] else None,
+                              label='Variable', with_input=True, on_change=pick).classes('w-72')
+                else:
+                    ui.input('Variable', value=w['name']).bind_value(w, 'name').classes('w-56')
+                ui.input('Address', value=w['addr']).bind_value(w, 'addr').classes('w-28')
+                ui.select(list(TYPES), value=w['type']).bind_value(w, 'type').classes('w-24')
+                ui.number('Value', value=w['value']).bind_value(w, 'value').classes('w-32') \
+                    .on('keydown.enter', lambda w=w: write(w))
+                ui.button(icon='send', on_click=lambda w=w: write(w)).props('flat dense').tooltip('Write')
+                ui.button(icon='delete', on_click=lambda w=w: (writes.remove(w), write_list.refresh())) \
+                    .props('flat dense')
+        ui.button('+ Variable', on_click=lambda: (writes.append(new_write()), write_list.refresh())).props('flat')
 
-            def by_addr():
-                try:
-                    open_write(addr.value, int(addr.value, 0), 's16')
-                except ValueError:
-                    ui.notify('Enter an address such as 0x1234', type='warning')
-            ui.button('Write ...', on_click=by_addr).props('outline')
-
-    with ui.card().classes('w-full'):
-        ui.label('Write variable').classes('font-bold')
-        write_row()
+    with ui.row().classes('w-full items-stretch'):
+        with ui.card().classes('grow'):
+            ui.label('Channels').classes('font-bold')
+            channel_list()
+        with ui.card().classes('grow'):
+            ui.label('Write variable').classes('font-bold')
+            write_list()
 
     # ---- settings ----
     with ui.card().classes('w-full'):
