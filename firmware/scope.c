@@ -10,6 +10,8 @@
  *       w     bits 0..2 = width in bytes (1,2,4), bit 7 = signed
  *   'R'                     run / arm       -> ACK, then data
  *   'S'                     stop            -> ACK
+ *   'X'                     reset           -> no reply, the firmware restarts
+ *                                              (ping until it answers again)
  *
  * Target -> PC:
  *   stream : 0xA5 seq payload            (payload = all channels, rec bytes)
@@ -24,6 +26,9 @@
 #endif
 #ifndef SCOPE_ADDR
 #define SCOPE_ADDR(a) ((volatile void *)(a))
+#endif
+#ifndef SCOPE_RESET
+#define SCOPE_RESET() __asm__ volatile ("reset")   /* software reset, sets RCON.SWR */
 #endif
 
 /* ---------- register names of the UART and timer selected in scope.h ---------- */
@@ -294,6 +299,7 @@ void scope_sample(void)
         if (tx_free() < rec_len + 2u) {
             scope_overflows++;
             seq++;                      /* PC sees the gap */
+            tx_kick();                  /* keep pumping: in the simulator the TX IRQ does not re-trigger */
             return;
         }
         read_ch(rec);
@@ -385,6 +391,13 @@ static void configure(void)
 
 static void command(void)
 {
+    if (rx[0] == 'X') {                 /* accepted in every state, like 'S' */
+        state = IDLE;
+        timer_run(0);
+        dump_left = 0;
+        SCOPE_RESET();
+        return;
+    }
     if (rx[0] == 'S') {
         state = IDLE;
         timer_run(0);
@@ -392,7 +405,7 @@ static void command(void)
         reply(ACK);
         return;
     }
-    if (state != IDLE || dump_left)     /* busy: only 'S' is accepted */
+    if (state != IDLE || dump_left)     /* busy: only 'S' and 'X' are accepted */
         return;
 
     switch (rx[0]) {

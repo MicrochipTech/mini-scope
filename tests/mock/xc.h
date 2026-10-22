@@ -11,6 +11,7 @@ typedef struct { unsigned TON, TCKPS; } t1con_t;
 stah_t *mock_stah(void);
 uint16_t *mock_txreg(void);
 uint16_t mock_rxreg(void);
+void mock_reset(void);
 
 extern sta_t   U1STAbits;
 extern mode_t_ U1MODEbits;
@@ -27,5 +28,6 @@ extern uint8_t mock_ram[];
 #define SCOPE_ISR
 #define SCOPE_ADDR(a)       ((volatile void *)(mock_ram + (a)))
 #define SCOPE_PINS_INIT()   do { } while (0)
+#define SCOPE_RESET()       mock_reset()
 
 #endif

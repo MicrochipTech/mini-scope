@@ -49,6 +49,18 @@ uint16_t mock_rxreg(void)
     return rx_data[rx_pos++];
 }
 
+static int resets;
+
+void mock_reset(void)
+{
+    resets++;                           /* the real target restarts here */
+}
+
+EXPORT int sim_resets(void)
+{
+    return resets;
+}
+
 static void tx_drain(int budget)
 {
     tx_budget = budget;

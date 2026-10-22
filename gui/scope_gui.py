@@ -82,6 +82,22 @@ class Scope:
                 last, seen = time.time(), self.ser.in_waiting
         self.ser.reset_input_buffer()
 
+    def reset(self):
+        """Restarts the target firmware ('X'). Returns an error text or None."""
+        self.stop()
+        self.ser.write(b'X')
+        end = time.time() + getattr(self.ser, 'reset_wait', 2.0)
+        while time.time() < end:
+            if self.ping():
+                return None
+        if hasattr(self.ser, 'reset_target'):     # MDB: firmware hangs, reset the simulated device
+            self.ser.reset_target()
+            end = time.time() + self.ser.reset_wait
+            while time.time() < end:
+                if self.ping():
+                    return None
+        return 'Target does not answer after the reset'
+
     def start(self, chans, mode, period_us, tch=0, ttype=0, level=0, pre_pct=0, auto=True):
         """chans: list of (address, type), pre_pct: pretrigger in %. Returns an error text or None."""
         self.stop()
@@ -425,6 +441,13 @@ def main_page():
             if pk > 0:                  # the largest channel keeps 1, the others are scaled up to it
                 ch['factor'] = nice_factor(ref / pk)
         channel_list.refresh()
+    async def reset():
+        if not app['scope']:
+            ui.notify('Connect first', type='warning')
+            return
+        ui.notify('Resetting the target ...')
+        err = await run.io_bound(app['scope'].reset)
+        ui.notify(err or 'Target restarted', type='negative' if err else 'positive')
 
     def csv():
         if not app['scope'] or 'active' not in app:
@@ -440,6 +463,7 @@ def main_page():
         ui.button('Start', on_click=start, color='positive')
         ui.button('Stop', on_click=stop, color='negative')
         ui.button('Autoscale', on_click=autoscale).props('outline')
+        ui.button('Reset', on_click=reset).props('outline')
         ui.button('CSV', on_click=csv).props('outline')
 
     chart = ui.echart({

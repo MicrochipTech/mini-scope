@@ -122,6 +122,9 @@ The recording appears after 10–30 s; the trigger is at 0 ms.
   the UART file in blocks.
 - **Stop takes time:** after **Stop** the user interface waits about 6 s
   until no late bytes arrive.
+- **Reset:** **Reset** restarts the firmware with the `reset` instruction, as on
+  the target. If the firmware no longer answers, the user interface resets the
+  simulated device through MDB instead. Allow up to 40 s.
 - **No hardware effects:** noise, timing on real pins and the behaviour of the
   PICkit cannot be checked in the simulator. It only shows whether the
   firmware logic is right.

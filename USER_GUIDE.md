@@ -92,7 +92,7 @@ From top to bottom the page has these areas:
 | **ELF file** | path to the ELF, **Load** button |
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
 | **Settings** | Stream or Capture, Sample period, trigger |
-| **Buttons** | **Start**, **Stop**, **Autoscale**, **CSV** |
+| **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV** |
 | **Chart** | curves, legend, zoom slider |
 
 ## 6. Step by step

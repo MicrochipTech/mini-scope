@@ -77,4 +77,10 @@ sc.stop()
 check(sc.start([(0x1001, 's16')], 0, 1000) is not None, 'odd address -> NAK')
 check(sc.ping(), 'target still alive after NAK')
 
+# 'X' resets the target, in every state (here while streaming)
+check(sc.start(CH, 0, 2000) is None, 'stream config ACK before reset')
+time.sleep(0.2)
+n = sc.ser.lib.sim_resets()
+check(sc.reset() is None and sc.ser.lib.sim_resets() == n + 1, "'X' -> reset, target answers again")
+
 sys.exit(1 if getattr(check, 'failed', False) else 0)

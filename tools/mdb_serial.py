@@ -31,6 +31,7 @@ def symbols(elf):
 
 class MdbSerial:
     quiet = 6.0                 # Scope.stop(): the output file lags by a few seconds
+    reset_wait = 40.0           # Scope.reset(): restart + first answer through the lagging file
 
     def __init__(self, elf, timeout=15.0, progress=None, uart=1):
         # uart: SCOPE_UART of the firmware (1..3)
@@ -72,6 +73,12 @@ class MdbSerial:
         time.sleep(self.quiet)      # late answers to repeated 'S'
         self.reset_input_buffer()
         self.progress(1.0, f'Simulator ready after {time.time() - self.t0:.0f} s')
+
+    def reset_target(self):
+        # device reset through MDB, also works when the firmware no longer reads the mailbox
+        for c in ('Halt', 'Reset', 'Run'):
+            self._cmd(c)
+        self.t_cmd = time.time()
 
     def _cmd(self, c):
         self.p.stdin.write(c + '\n')
