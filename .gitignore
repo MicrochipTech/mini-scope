@@ -20,3 +20,4 @@ test.X/debug/
 .venv/
 doctor_report.txt
 hw_report.txt
+/*.pdf

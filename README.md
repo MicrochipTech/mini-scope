@@ -27,14 +27,15 @@ Two modes:
 | `gui/scope_gui.py` | PC user interface (NiceGUI in the browser) |
 | `start_gui.bat` | starts the user interface, sets up Python on the first start |
 | `start_sim.bat` | builds `test.X` for the simulator and starts the user interface |
-| `USER_GUIDE.md/.pdf` | user guide |
-| `SIMULATOR.md/.pdf` | guide for the simulation without hardware |
-| `TROUBLESHOOTING.md/.pdf` | troubleshooting guide: what to check when it does not work |
+| `USER_GUIDE.md` | user guide |
+| `SIMULATOR.md` | guide for the simulation without hardware |
+| `TROUBLESHOOTING.md` | troubleshooting guide: what to check when it does not work |
 | `test.X` | MPLAB X test project, configurations `default` (PICkit 5) and `sim` (simulator) |
 | `tools/setup_env.bat` | creates the Python environment `.venv` on the first start |
 | `tools/mdb_serial.py` | connects the GUI to the firmware in the MPLAB X simulator |
 | `tools/doctor.py` | checks the PC and the project settings, writes `doctor_report.txt` |
 | `tools/hw_check.py` | checks mini-scope on the board (ping, clock, rates, capture, reset), writes `hw_report.txt` |
+| `tools/make_pdfs.py` | builds PDF versions of the three guides (needs pandoc and Edge) |
 | `CLAUDE.md` | notes for Claude Code, for help with getting mini-scope running on your board |
 | `tests/` | PC model: `scope.c` built as a DLL, plus a protocol test |
 | `LICENSE.txt` | license |
