@@ -2,3 +2,4 @@ nicegui>=2.0
 pyserial
 numpy
 pyelftools
+matplotlib

@@ -94,7 +94,7 @@ From top to bottom the page has these areas:
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
 | **Write variable** | next to the channels: one row per variable: Variable, Address, type, Value, write, delete |
 | **Settings** | Stream or Capture, Sample period, trigger |
-| **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV** |
+| **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV**, **PNG** |
 | **Chart** | curves, legend, zoom slider |
 | **Cursors and measurements** | below the chart: cursor mode, cursor readout, table with the measurements |
 
@@ -248,6 +248,18 @@ change hardware registers. Only write to variables you know.
 **CSV** saves the data currently shown, that is the stream window or the last
 recording. The first column is the time in ms; the file is comma separated
 with a decimal point.
+
+**PNG** saves a picture of 1920 × 1080 pixels, the 16:9 format of a
+PowerPoint slide, on a white background. It contains:
+
+- date and time, mode, sample period, number of samples, lost frames or the
+  trigger settings, port, baud rate and ELF file,
+- the chart as zoomed on the screen, with the cursors and the factors in the
+  legend,
+- the measurement table and the cursor readout.
+
+The picture is drawn on the PC with matplotlib, so it looks the same whatever
+the browser window size.
 
 ### 6.8 Saving the settings
 

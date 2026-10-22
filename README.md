@@ -212,7 +212,9 @@ http://localhost:8080.
    into the controller at once, also during a measurement. The demo variables
    `sine_gain` (sine amplitude, Q15) and `ramp_step` (slope of the ramp)
    show the effect.
-6. **CSV** saves the data shown (comma separated, decimal point).
+6. **CSV** saves the data shown (comma separated, decimal point). **PNG** saves a
+   1920 × 1080 picture (16:9, a PowerPoint slide) with the zoomed chart, the
+   cursors, the measurement table and the settings.
 7. **Save** (next to the title) stores all settings in `mini-scope.json` in
    the project folder, which is loaded at every start. **Save as ...** and
    **Load from ...** use a file of your choice.

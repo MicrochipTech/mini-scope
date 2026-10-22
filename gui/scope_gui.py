@@ -43,6 +43,8 @@ CHART_CLICK_JS = '''
                 emitEvent('chart_click', {x: p[0], y: p[1]});
             });
         })();'''   # chart id -> emits chart_click with the data coordinates
+PNG_ZOOM_JS = '''(() => { const o = getElement(%d).chart.getOption().dataZoom[0];
+    return [o.startValue, o.endValue, o.start, o.end]; })()'''   # chart id -> visible x range
 CONFIG = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mini-scope.json'))
 
 
@@ -272,6 +274,63 @@ def measure(t_ms, y):
         m['freq'] = 1000 / m['period'] if m['period'] > 0 else None
         m['duty'] = 100 * float(np.mean(y[rise[0]:rise[-1]] > mid))
     return m
+
+
+def render_png(d):
+    """Chart, settings and measurements as a 1920 x 1080 PNG (16:9, a PowerPoint slide). Returns the bytes.
+
+    d: title, info (lines below the title), series [(name, x, y)], xlim, cursors [(axis, value, label)],
+    columns, rows (measurement table), notes (lines below the table).
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    fig = Figure(figsize=(16, 9), dpi=120)
+    FigureCanvasAgg(fig)
+    fig.text(0.03, 0.965, d['title'], fontsize=20, fontweight='bold', va='top')
+    fig.text(0.03, 0.915, '\n'.join(d['info']), fontsize=11, color='#444', va='top', linespacing=1.5)
+    # stacked from the bottom: notes, table, x axis label, chart up to the header
+    n_rows = len(d['rows'])
+    notes_h = 0.03 * len(d['notes'])
+    table_y = 0.025 + notes_h
+    table_h = min(0.36, 0.03 * (n_rows + 1)) if n_rows else 0
+    chart_y = table_y + table_h + 0.075
+    chart_top = 0.90 - 0.03 * len(d['info'])
+    ax = fig.add_axes([0.06, chart_y, 0.92, chart_top - chart_y])
+    for name, x, y in d['series']:
+        ax.plot(x, y, linewidth=1.2, label=name)
+    for axis, v, label in d['cursors']:
+        (ax.axvline if axis == 'x' else ax.axhline)(v, color='#d08000', linestyle='--', linewidth=1)
+        if axis == 'x':
+            ax.annotate(label, (v, 1), xycoords=('data', 'axes fraction'), xytext=(3, -12),
+                        textcoords='offset points', color='#d08000', fontsize=10)
+        else:
+            ax.annotate(label, (1, v), xycoords=('axes fraction', 'data'), xytext=(-22, 3),
+                        textcoords='offset points', color='#d08000', fontsize=10)
+    if d['xlim']:
+        ax.set_xlim(*d['xlim'])
+    ax.set_xlabel('ms')
+    ax.grid(True, color='#ddd')
+    if d['series']:
+        ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
+    if n_rows:
+        tab_ax = fig.add_axes([0.03, table_y, 0.94, table_h])
+        tab_ax.axis('off')
+        tab = tab_ax.table(cellText=d['rows'], colLabels=d['columns'], bbox=[0, 0, 1, 1], cellLoc='right',
+                           colLoc='right')
+        tab.auto_set_font_size(False)
+        tab.set_fontsize(10 if n_rows <= 8 else 8)
+        for (r, c), cell in tab.get_celld().items():
+            cell.set_edgecolor('#ccc')
+            if r == 0:
+                cell.set_facecolor('#eee')
+                cell.set_text_props(fontweight='bold')
+            if c == 0:
+                cell.set_text_props(ha='left')
+    for i, line in enumerate(d['notes']):
+        fig.text(0.03, table_y - 0.03 * (i + 1) + 0.005, line, fontsize=10, color='#444')
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', facecolor='white')
+    return buf.getvalue()
 
 
 def pick_file(start_dir, title, filetypes, save=False):
@@ -559,6 +618,45 @@ def main_page():
         err = await run.io_bound(app['scope'].reset)
         ui.notify(err or 'Target restarted', type='negative' if err else 'positive')
 
+    async def png():
+        if not app['scope'] or 'active' not in app:
+            ui.notify('Start a measurement first', type='warning')
+            return
+        t, cols = shown()
+        fs = factors()
+        x = t * app['period'] / 1000
+        step = max(1, math.ceil(len(t) / 20000))
+        series = [(n if f == 1 else f'{n}  (x {f:g})', x[::step], c[::step] * f)
+                  for n, c, f in zip(app['names'], cols, fs)]
+        xlim = None
+        try:                                # the zoomed part of the chart, as on the screen
+            z = await ui.run_javascript(PNG_ZOOM_JS % chart.id)
+            if len(x) and z:
+                lo, hi = float(x.min()), float(x.max())
+                a = z[0] if isinstance(z[0], (int, float)) else lo + (hi - lo) * (z[2] or 0) / 100
+                b = z[1] if isinstance(z[1], (int, float)) else lo + (hi - lo) * (z[3] if z[3] is not None else 100) / 100
+                xlim = (a, b)
+        except Exception:                   # noqa: BLE001 - without the zoom state the whole chart is shown
+            pass
+        sc, m = app['scope'], app['mode']
+        info = [f"{'Stream' if m == 0 else 'Capture'}, sample period {app['period']} µs, {len(t)} samples"
+                + (f', lost frames {sc.lost}' if m == 0 else
+                   f", trigger channel {int(tch.value)} {TRIGGERS[ttype.value]} through {level.value:g} (raw), "
+                   f"pretrigger {pre.value:g} %")]
+        info.append(f"Port {port.value}, {int(baud.value)} baud" + (f",  ELF {os.path.basename(elf.value.strip())}"
+                                                                      if elf.value.strip() else ''))
+        label, rows = app.get('meas', ('', []))
+        keys = [c['name'] for c in meas_cols if cur_mode.value == 'time' or c['name'] not in ('c1', 'c2', 'delta')]
+        d = {'title': f"mini-scope  {time.strftime('%Y-%m-%d %H:%M:%S')}", 'info': info, 'series': series,
+             'xlim': xlim,
+             'cursors': [('x' if cur_mode.value == 'time' else 'y', v, f'C{i + 1}')
+                         for i, v in enumerate(app['cur']) if v is not None and cur_mode.value != 'off'],
+             'columns': [c['label'] for c in meas_cols if c['name'] in keys],
+             'rows': [[r.get(k, '') for k in keys] for r in rows],
+             'notes': [n for n in (label, cur_info.text) if n]}
+        data = await run.io_bound(render_png, d)
+        ui.download.content(data, f"mini-scope_{time.strftime('%Y%m%d_%H%M%S')}.png")
+
     def csv():
         if not app['scope'] or 'active' not in app:
             return
@@ -575,6 +673,8 @@ def main_page():
         ui.button('Autoscale', on_click=autoscale).props('outline')
         ui.button('Reset', on_click=reset).props('outline')
         ui.button('CSV', on_click=csv).props('outline')
+        ui.button('PNG', on_click=lambda: png()).props('outline').tooltip('Chart, settings and measurements as a '
+                                                                          '16:9 picture for a slide')
 
     chart = ui.echart({
         'backgroundColor': 'transparent',
@@ -638,6 +738,7 @@ def main_page():
             rows.append(row)
         meas.rows = rows
         meas.update()
+        app['meas'] = (meas_label.text, rows)
         if cur_mode.value == 'off':
             cur_info.text = ''
         elif c[0] is None:
