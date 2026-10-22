@@ -32,6 +32,17 @@ DEFAULT_TYPE = {1: 's8', 2: 's16', 4: 's32'}
 TRIGGERS = {0: 'none (immediate)', 1: 'rising', 2: 'falling'}
 KEEP = 200_000         # stream samples kept for display / CSV
 MAX_POINTS = 4000       # points per series sent to the browser
+CHART_CLICK_JS = '''
+        (function attach() {
+            const el = getElement(%d);
+            if (!el || !el.chart) { setTimeout(attach, 200); return; }
+            const c = el.chart;
+            c.getZr().on('click', e => {
+                if (!c.containPixel({gridIndex: 0}, [e.offsetX, e.offsetY])) return;
+                const p = c.convertFromPixel({gridIndex: 0}, [e.offsetX, e.offsetY]);
+                emitEvent('chart_click', {x: p[0], y: p[1]});
+            });
+        })();'''   # chart id -> emits chart_click with the data coordinates
 CONFIG = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mini-scope.json'))
 
 
@@ -239,6 +250,30 @@ def stream_load(rec, period_us, baud):
     return need, have, math.ceil(frame * 1e6 / (0.9 * have))
 
 
+def measure(t_ms, y):
+    """Min, max, pk-pk, mean, RMS, frequency (Hz), period (ms), duty (%) of one channel; None if no data.
+
+    Frequency, period and duty use the rising crossings through the middle between min and max, with
+    10 % of pk-pk hysteresis, and need at least two of them.
+    """
+    y = np.asarray(y, dtype=float)
+    if not len(y):
+        return None
+    lo, hi = float(y.min()), float(y.max())
+    m = {'min': lo, 'max': hi, 'pkpk': hi - lo, 'mean': float(y.mean()), 'rms': float(np.sqrt(np.mean(y * y))),
+         'freq': None, 'period': None, 'duty': None}
+    mid, h = (hi + lo) / 2, 0.05 * (hi - lo)
+    state = np.where(y > mid + h, 1, np.where(y < mid - h, -1, 0))
+    idx = np.flatnonzero(state)                  # samples clearly above or below the middle
+    s = state[idx]
+    rise = idx[1:][(s[1:] == 1) & (s[:-1] == -1)]
+    if hi > lo and len(rise) >= 2:
+        m['period'] = float(t_ms[rise[-1]] - t_ms[rise[0]]) / (len(rise) - 1)
+        m['freq'] = 1000 / m['period'] if m['period'] > 0 else None
+        m['duty'] = 100 * float(np.mean(y[rise[0]:rise[-1]] > mid))
+    return m
+
+
 def pick_file(start_dir, title, filetypes, save=False):
     """Windows file dialog (the GUI server runs on the same PC as the browser)."""
     import tkinter
@@ -272,7 +307,7 @@ def _open_port(name, baud, progress):
 
 
 def main_page():
-    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None}
+    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'cur': [None, None]}
     chans = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1}]
     new_write = lambda: {'name': '', 'addr': '', 'type': 's16', 'value': None}    # noqa: E731
     writes = [new_write()]
@@ -553,6 +588,68 @@ def main_page():
         'series': [],
     }, theme='dark').classes('w-full h-[32rem]')
 
+    # ---- cursors: a click in the chart sets C1, then C2, then moves the nearer one ----
+    def chart_click(e):
+        if cur_mode.value == 'off':
+            return
+        v = float(e.args['x' if cur_mode.value == 'time' else 'y'])
+        c = app['cur']
+        if c[0] is None:
+            c[0] = v
+        elif c[1] is None:
+            c[1] = v
+        else:
+            c[0 if abs(v - c[0]) <= abs(v - c[1]) else 1] = v
+
+    ui.on('chart_click', chart_click)
+    ui.timer(0.5, lambda: ui.run_javascript(CHART_CLICK_JS % chart.id), once=True)
+
+    with ui.row().classes('items-center'):
+        cur_mode = ui.toggle({'off': 'Cursors off', 'time': 'Time', 'value': 'Value'}, value='off',
+                             on_change=lambda: app.update(cur=[None, None]))
+        ui.button('Clear', on_click=lambda: app.update(cur=[None, None])).props('flat')
+        cur_info = ui.label()
+
+    meas_cols = [{'name': k, 'label': lab, 'field': k, 'align': 'left' if k == 'ch' else 'right'}
+                 for k, lab in (('ch', 'Channel'), ('min', 'Min'), ('max', 'Max'), ('pkpk', 'Pk-Pk'),
+                                ('mean', 'Mean'), ('rms', 'RMS'), ('freq', 'Freq Hz'), ('period', 'Period ms'),
+                                ('duty', 'Duty %'), ('c1', '@C1'), ('c2', '@C2'), ('delta', 'Δ'))]
+    meas_label = ui.label().classes('text-sm text-gray-400')
+    meas = ui.table(columns=meas_cols, rows=[], row_key='ch').props('dense flat').classes('w-full')
+
+    def fmt(v):
+        return '' if v is None else f'{v:.0f}' if abs(v) >= 1000 else f'{v:.4g}'
+
+    def update_measurements(x, cols, fs):
+        c = app['cur']
+        both = cur_mode.value == 'time' and None not in c
+        rng = (x >= min(c)) & (x <= max(c)) if both else np.ones(len(x), bool)
+        meas_label.text = ('Measurements between the cursors' if both else 'Measurements over the chart') \
+            + f', {int(rng.sum())} samples'
+        rows = []
+        for n, col, f in zip(app['names'], cols, fs):
+            y = col.astype(float) * f
+            m = measure(x[rng], y[rng]) or {}
+            row = {'ch': n, **{k: fmt(m.get(k)) for k in ('min', 'max', 'pkpk', 'mean', 'rms', 'freq', 'period',
+                                                           'duty')}}
+            if cur_mode.value == 'time' and len(x):
+                at = [None if t is None else float(y[np.argmin(np.abs(x - t))]) for t in c]
+                row.update(c1=fmt(at[0]), c2=fmt(at[1]), delta=fmt(at[1] - at[0]) if None not in at else '')
+            rows.append(row)
+        meas.rows = rows
+        meas.update()
+        if cur_mode.value == 'off':
+            cur_info.text = ''
+        elif c[0] is None:
+            cur_info.text = 'click into the chart: cursor 1, then cursor 2, then the nearer one moves'
+        elif cur_mode.value == 'time':
+            cur_info.text = f't1 = {fmt(c[0])} ms' + (
+                f',  t2 = {fmt(c[1])} ms,  Δt = {fmt(c[1] - c[0])} ms,  1/Δt = {fmt(1000 / abs(c[1] - c[0]))} Hz'
+                if c[1] is not None and c[1] != c[0] else '')
+        else:
+            cur_info.text = f'y1 = {fmt(c[0])}' + (f',  y2 = {fmt(c[1])},  Δy = {fmt(c[1] - c[0])}'
+                                                   if c[1] is not None else '')
+
     def refresh():
         progress_box.visible = app['progress'] is not None
         if app['progress']:
@@ -577,11 +674,19 @@ def main_page():
         t, cols = shown()
         step = max(1, math.ceil(len(t) / MAX_POINTS))
         x = t[::step] * app['period'] / 1000
+        fs = factors()
         chart.options['series'] = [
             {'name': n, 'type': 'line', 'showSymbol': False,
              'data': np.column_stack((x, c[::step] * f)).tolist()}
-            for n, c, f in zip(app['names'], cols, factors())]
+            for n, c, f in zip(app['names'], cols, fs)]
+        marks = [{'xAxis' if cur_mode.value == 'time' else 'yAxis': v, 'label': {'formatter': f'C{i + 1}'}}
+                 for i, v in enumerate(app['cur']) if v is not None and cur_mode.value != 'off']
+        if chart.options['series'] and marks:
+            chart.options['series'][0]['markLine'] = {
+                'symbol': 'none', 'silent': True, 'animation': False, 'data': marks,
+                'lineStyle': {'color': '#ffcc00', 'type': 'dashed'}, 'label': {'color': '#ffcc00'}}
         chart.update()
+        update_measurements(t * app['period'] / 1000, cols, fs)
         status.text = (('running' if sc.running else 'stopped')
                        + (f' | lost frames: {sc.lost}' if app['mode'] == 0 else f' | captures: {sc.captures}'))
 

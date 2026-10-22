@@ -96,6 +96,7 @@ From top to bottom the page has these areas:
 | **Settings** | Stream or Capture, Sample period, trigger |
 | **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV** |
 | **Chart** | curves, legend, zoom slider |
+| **Cursors and measurements** | below the chart: cursor mode, cursor readout, table with the measurements |
 
 ## 6. Step by step
 
@@ -191,6 +192,27 @@ depth**. Fewer channels mean a longer recording.
 - **Zoom:** mouse wheel in the chart, or drag the slider below it.
 - **Hide a channel:** click its name in the legend.
 - **Read values:** hover over the curve.
+
+**Measurements:** the table below the chart shows for every channel Min, Max,
+Pk-Pk, Mean, RMS, and, for periodic signals, frequency, period and duty cycle.
+The values include the channel factor. They cover the data in the chart, or
+only the part between the two time cursors when both are set. Frequency,
+period and duty count the rising crossings through the middle between Min and
+Max, with 10 % hysteresis against noise; they need at least two full periods.
+The duty cycle is counted in samples, so with few samples per period it is
+only accurate to one sample.
+
+**Cursors:** select **Time** or **Value** below the chart, then click into the
+chart. The first click sets cursor C1, the second C2; after that a click moves
+the nearer cursor. **Clear** removes both.
+
+- **Time** (vertical lines): shows t1, t2, Δt and 1/Δt, and adds the value of
+  every channel at C1 and C2 and their difference to the table. The
+  measurements then cover the range between the cursors.
+- **Value** (horizontal lines): shows y1, y2 and Δy.
+
+Tip: click **Stop** first, then the curve stands still while you place the
+cursors.
 
 ### 6.6 Changing values in the controller
 

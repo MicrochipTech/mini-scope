@@ -10,7 +10,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [HERE, os.path.join(HERE, '..', 'gui')]
-from scope_gui import Scope              # noqa: E402
+from scope_gui import Scope, measure     # noqa: E402
 from sim_serial import SimSerial, SYMBOLS  # noqa: E402
 
 CH = [(SYMBOLS['sine'][0], 's16'), (SYMBOLS['ramp'][0], 'u16'),
@@ -103,5 +103,17 @@ check(sc.write(STEP, 'u16', 70000) is not None and sc.write(STEP, 'u16', 1.5) is
       'value out of range / not whole rejected by the GUI')
 sc.ser.write(b'W' + (STEP + 1).to_bytes(2, 'little') + bytes([2]) + bytes(4))
 check(sc.ping(), "target ignores 'W' with an odd address and still answers")
+
+# measurements under the chart (GUI only)
+tm = np.arange(0, 200, 1.0)
+m = measure(tm, 1000 * np.sin(2 * np.pi * 50 * tm / 1000 + 0.3))
+check(abs(m['freq'] - 50) < 0.1 and abs(m['rms'] - 707.1) < 1 and abs(m['duty'] - 50) < 2,
+      f"measure sine 50 Hz: {m['freq']:.2f} Hz, RMS {m['rms']:.1f}, duty {m['duty']:.0f} %")
+m = measure(tm, np.where((tm % 10) < 2, 5.0, 0.0))
+check(abs(m['freq'] - 100) < 0.1 and abs(m['duty'] - 20) < 0.5 and m['pkpk'] == 5,
+      f"measure square 100 Hz, 20 %: {m['freq']:.2f} Hz, duty {m['duty']:.0f} %")
+noisy = 1000 * np.sin(2 * np.pi * 20 * tm / 1000) + np.random.default_rng(1).normal(0, 30, len(tm))
+check(abs(measure(tm, noisy)['freq'] - 20) < 0.2, 'measure noisy sine: the hysteresis ignores the noise')
+check(measure(tm, np.full(len(tm), 3.0))['freq'] is None, 'measure flat line: no frequency')
 
 sys.exit(1 if getattr(check, 'failed', False) else 0)

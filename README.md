@@ -221,6 +221,10 @@ Zoom in the chart with the mouse wheel or the slider. Clicking a name in the
 legend hides that channel. **Autoscale** sets the factors so that all channels
 use the same range (the largest channel keeps factor 1, the others get a round
 factor 1/2/5 × 10ⁿ); factors apply at once, also during a measurement.
+Below the chart, a table shows Min, Max, Pk-Pk, Mean, RMS, frequency, period
+and duty cycle of every channel. **Time** and **Value** cursors are set by
+clicking into the chart; with two time cursors the table also shows the values
+at the cursors and measures only between them.
 
 ## Test project and simulation without hardware
 
@@ -259,7 +263,7 @@ modelled registers as a DLL. Data arrives in real time.
 ```
 gcc -O2 -shared -Itests/mock -Ifirmware -o tests/sim.dll tests/mock/sim.c firmware/scope.c
 start_gui.bat --sim                      (port "SIM", leave the ELF field empty, Load)
-.venv\Scripts\python tests\test_protocol.py   (30 automatic checks)
+.venv\Scripts\python tests\test_protocol.py   (34 automatic checks)
 ```
 
 The paths to MPLAB X v6.35, XC-DSC v3.30 and the DFP are at the top of
