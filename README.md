@@ -227,9 +227,10 @@ legend hides that channel. **Autoscale** sets the factors so that all channels
 use the same range (the largest channel keeps factor 1, the others get a round
 factor 1/2/5 × 10ⁿ); factors apply at once, also during a measurement.
 Below the chart, a table shows Min, Max, Pk-Pk, Mean, RMS, frequency, period
-and duty cycle of every channel. **Time** and **Value** cursors are set by
-clicking into the chart; with two time cursors the table also shows the values
-at the cursors and measures only between them.
+and duty cycle of every channel. Time cursors (T1, T2) and value cursors (Y1,
+Y2), also both at once, are set by clicking into the chart (with both on:
+Shift+click for the value cursors); with two time cursors the table also shows
+the values at the cursors and measures only between them.
 
 ## Test project and simulation without hardware
 

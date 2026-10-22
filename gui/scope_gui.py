@@ -40,7 +40,7 @@ CHART_CLICK_JS = '''
             c.getZr().on('click', e => {
                 if (!c.containPixel({gridIndex: 0}, [e.offsetX, e.offsetY])) return;
                 const p = c.convertFromPixel({gridIndex: 0}, [e.offsetX, e.offsetY]);
-                emitEvent('chart_click', {x: p[0], y: p[1]});
+                emitEvent('chart_click', {x: p[0], y: p[1], shift: e.event.shiftKey});
             });
         })();'''   # chart id -> emits chart_click with the data coordinates
 PNG_ZOOM_JS = '''(() => { const o = getElement(%d).chart.getOption().dataZoom[0];
@@ -369,7 +369,7 @@ def _open_port(name, baud, progress):
 
 
 def main_page():
-    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'cur': [None, None], 'cfg': CONFIG}
+    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'tc': [None, None], 'vc': [None, None], 'cfg': CONFIG}
     chans = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1}]
     new_write = lambda: {'name': '', 'addr': '', 'type': 's16', 'value': None}    # noqa: E731
     writes = [new_write()]
@@ -649,12 +649,11 @@ def main_page():
         info.append(f"Port {port.value}, {int(baud.value)} baud" + (f",  ELF {os.path.basename(elf.value.strip())}"
                                                                       if elf.value.strip() else ''))
         label, rows = app.get('meas', ('', []))
-        keys = [c['name'] for c in meas_cols if cur_mode.value == 'time' or c['name'] not in ('c1', 'c2', 'delta')]
+        keys = [c['name'] for c in meas_cols if tcur.value or c['name'] not in ('c1', 'c2', 'delta')]
         d = {'title': f"mini-scope  {time.strftime('%Y-%m-%d %H:%M:%S')}", 'note': (note.value or '').strip(),
              'info': info, 'series': series,
              'xlim': xlim,
-             'cursors': [('x' if cur_mode.value == 'time' else 'y', v, f'C{i + 1}')
-                         for i, v in enumerate(app['cur']) if v is not None and cur_mode.value != 'off'],
+             'cursors': cursor_marks(),
              'columns': [c['label'] for c in meas_cols if c['name'] in keys],
              'rows': [[r.get(k, '') for k in keys] for r in rows],
              'notes': [n for n in (label, cur_info.text) if n]}
@@ -702,43 +701,65 @@ def main_page():
         'series': [],
     }, theme='dark').classes('w-full h-[32rem]')
 
-    # ---- cursors: a click in the chart sets C1, then C2, then moves the nearer one ----
+    # ---- cursors: time T1/T2 and value Y1/Y2, both at the same time if wanted ----
     def chart_click(e):
-        if cur_mode.value == 'off':
+        # one kind on: a click sets it; both on: click = time, Shift+click = value
+        if not (tcur.value or vcur.value):
             return
-        v = float(e.args['x' if cur_mode.value == 'time' else 'y'])
-        c = app['cur']
+        kind = 'v' if vcur.value and (e.args.get('shift') or not tcur.value) else 't'
+        v = float(e.args['y' if kind == 'v' else 'x'])
+        c = app[kind + 'c']
         if c[0] is None:
             c[0] = v
         elif c[1] is None:
             c[1] = v
-        else:
+        else:                                   # the nearer cursor moves
             c[0 if abs(v - c[0]) <= abs(v - c[1]) else 1] = v
+
+    def clear_cursors():
+        app.update(tc=[None, None], vc=[None, None])
 
     ui.on('chart_click', chart_click)
     ui.timer(0.5, lambda: ui.run_javascript(CHART_CLICK_JS % chart.id), once=True)
 
     with ui.row().classes('items-center'):
-        cur_mode = ui.toggle({'off': 'Cursors off', 'time': 'Time', 'value': 'Value'}, value='off',
-                             on_change=lambda: app.update(cur=[None, None]))
-        ui.button('Clear', on_click=lambda: app.update(cur=[None, None])).props('flat')
+        tcur = ui.checkbox('Time cursors', on_change=lambda: app.update(tc=[None, None]))
+        vcur = ui.checkbox('Value cursors', on_change=lambda: app.update(vc=[None, None]))
+        ui.button('Clear', on_click=clear_cursors).props('flat')
         cur_info = ui.label()
 
     meas_cols = [{'name': k, 'label': lab, 'field': k, 'align': 'left' if k == 'ch' else 'right'}
                  for k, lab in (('ch', 'Channel'), ('min', 'Min'), ('max', 'Max'), ('pkpk', 'Pk-Pk'),
                                 ('mean', 'Mean'), ('rms', 'RMS'), ('freq', 'Freq Hz'), ('period', 'Period ms'),
-                                ('duty', 'Duty %'), ('c1', '@C1'), ('c2', '@C2'), ('delta', 'Δ'))]
+                                ('duty', 'Duty %'), ('c1', '@T1'), ('c2', '@T2'), ('delta', 'Δ'))]
     meas_label = ui.label().classes('text-sm text-gray-400')
     meas = ui.table(columns=meas_cols, rows=[], row_key='ch').props('dense flat').classes('w-full')
 
     def fmt(v):
         return '' if v is None else f'{v:.0f}' if abs(v) >= 1000 else f'{v:.4g}'
 
+    def cursor_text():
+        tc, vc, parts = app['tc'], app['vc'], []
+        if tcur.value and tc[0] is not None:
+            parts.append(f't1 = {fmt(tc[0])} ms' + (
+                f',  t2 = {fmt(tc[1])} ms,  Δt = {fmt(tc[1] - tc[0])} ms,  1/Δt = {fmt(1000 / abs(tc[1] - tc[0]))} Hz'
+                if tc[1] is not None and tc[1] != tc[0] else ''))
+        if vcur.value and vc[0] is not None:
+            parts.append(f'y1 = {fmt(vc[0])}' + (f',  y2 = {fmt(vc[1])},  Δy = {fmt(vc[1] - vc[0])}'
+                                                 if vc[1] is not None else ''))
+        if parts:
+            return '     |     '.join(parts)
+        if tcur.value and vcur.value:
+            return 'click into the chart: time cursor, Shift+click: value cursor'
+        if tcur.value or vcur.value:
+            return 'click into the chart: cursor 1, then cursor 2, then the nearer one moves'
+        return ''
+
     def update_measurements(x, cols, fs):
-        c = app['cur']
-        both = cur_mode.value == 'time' and None not in c
-        rng = (x >= min(c)) & (x <= max(c)) if both else np.ones(len(x), bool)
-        meas_label.text = ('Measurements between the cursors' if both else 'Measurements over the chart') \
+        tc = app['tc']
+        both = tcur.value and None not in tc
+        rng = (x >= min(tc)) & (x <= max(tc)) if both else np.ones(len(x), bool)
+        meas_label.text = ('Measurements between the time cursors' if both else 'Measurements over the chart') \
             + f', {int(rng.sum())} samples'
         rows = []
         for n, col, f in zip(app['names'], cols, fs):
@@ -746,24 +767,19 @@ def main_page():
             m = measure(x[rng], y[rng]) or {}
             row = {'ch': n, **{k: fmt(m.get(k)) for k in ('min', 'max', 'pkpk', 'mean', 'rms', 'freq', 'period',
                                                            'duty')}}
-            if cur_mode.value == 'time' and len(x):
-                at = [None if t is None else float(y[np.argmin(np.abs(x - t))]) for t in c]
+            if tcur.value and len(x):
+                at = [None if t is None else float(y[np.argmin(np.abs(x - t))]) for t in tc]
                 row.update(c1=fmt(at[0]), c2=fmt(at[1]), delta=fmt(at[1] - at[0]) if None not in at else '')
             rows.append(row)
         meas.rows = rows
         meas.update()
         app['meas'] = (meas_label.text, rows)
-        if cur_mode.value == 'off':
-            cur_info.text = ''
-        elif c[0] is None:
-            cur_info.text = 'click into the chart: cursor 1, then cursor 2, then the nearer one moves'
-        elif cur_mode.value == 'time':
-            cur_info.text = f't1 = {fmt(c[0])} ms' + (
-                f',  t2 = {fmt(c[1])} ms,  Δt = {fmt(c[1] - c[0])} ms,  1/Δt = {fmt(1000 / abs(c[1] - c[0]))} Hz'
-                if c[1] is not None and c[1] != c[0] else '')
-        else:
-            cur_info.text = f'y1 = {fmt(c[0])}' + (f',  y2 = {fmt(c[1])},  Δy = {fmt(c[1] - c[0])}'
-                                                   if c[1] is not None else '')
+        cur_info.text = cursor_text()
+
+    def cursor_marks():
+        """[(axis 'x'/'y', value, label)] of all cursors that are on and set."""
+        return ([('x', v, f'T{i + 1}') for i, v in enumerate(app['tc']) if tcur.value and v is not None]
+                + [('y', v, f'Y{i + 1}') for i, v in enumerate(app['vc']) if vcur.value and v is not None])
 
     def refresh():
         progress_box.visible = app['progress'] is not None
@@ -794,8 +810,7 @@ def main_page():
             {'name': n, 'type': 'line', 'showSymbol': False,
              'data': np.column_stack((x, c[::step] * f)).tolist()}
             for n, c, f in zip(app['names'], cols, fs)]
-        marks = [{'xAxis' if cur_mode.value == 'time' else 'yAxis': v, 'label': {'formatter': f'C{i + 1}'}}
-                 for i, v in enumerate(app['cur']) if v is not None and cur_mode.value != 'off']
+        marks = [{'xAxis' if a == 'x' else 'yAxis': v, 'label': {'formatter': lab}} for a, v, lab in cursor_marks()]
         if chart.options['series'] and marks:
             chart.options['series'][0]['markLine'] = {
                 'symbol': 'none', 'silent': True, 'animation': False, 'data': marks,

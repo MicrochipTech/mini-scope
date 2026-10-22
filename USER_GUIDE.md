@@ -96,7 +96,7 @@ From top to bottom the page has these areas:
 | **Settings** | Stream or Capture, Sample period, trigger |
 | **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV**, **PNG**, **Note for the PNG** |
 | **Chart** | curves, legend, zoom slider |
-| **Cursors and measurements** | below the chart: cursor mode, cursor readout, table with the measurements |
+| **Cursors and measurements** | below the chart: time and value cursors, cursor readout, table with the measurements |
 
 ## 6. Step by step
 
@@ -202,14 +202,15 @@ Max, with 10 % hysteresis against noise; they need at least two full periods.
 The duty cycle is counted in samples, so with few samples per period it is
 only accurate to one sample.
 
-**Cursors:** select **Time** or **Value** below the chart, then click into the
-chart. The first click sets cursor C1, the second C2; after that a click moves
-the nearer cursor. **Clear** removes both.
+**Cursors:** tick **Time cursors**, **Value cursors** or both below the chart,
+then click into the chart. The first click sets cursor 1, the second cursor 2;
+after that a click moves the nearer one. With both kinds on, a click sets a
+time cursor and **Shift**+click a value cursor. **Clear** removes all cursors.
 
-- **Time** (vertical lines): shows t1, t2, Δt and 1/Δt, and adds the value of
-  every channel at C1 and C2 and their difference to the table. The
-  measurements then cover the range between the cursors.
-- **Value** (horizontal lines): shows y1, y2 and Δy.
+- **Time cursors** T1, T2 (vertical lines): show t1, t2, Δt and 1/Δt, and add
+  the value of every channel at T1 and T2 and their difference to the table.
+  The measurements then cover the range between T1 and T2.
+- **Value cursors** Y1, Y2 (horizontal lines): show y1, y2 and Δy.
 
 Tip: click **Stop** first, then the curve stands still while you place the
 cursors.
