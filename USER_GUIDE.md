@@ -94,7 +94,7 @@ From top to bottom the page has these areas:
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
 | **Write variable** | next to the channels: one row per variable: Variable, Address, type, Value, write, delete |
 | **Settings** | Stream or Capture, Sample period, trigger |
-| **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV**, **PNG**, **Note for the PNG** |
+| **Buttons** | **Start**, **Stop** (only the one that applies is filled: Start while stopped, Stop while running), **Autoscale**, **Reset** (restarts the target firmware), **CSV**, **PNG**, **Note for the PNG** |
 | **Chart** | curves, legend, zoom slider |
 | **Cursors and measurements** | below the chart: time and value cursors, cursor readout, table with the measurements |
 
@@ -259,13 +259,14 @@ with a decimal point.
 **PNG** saves a picture of 1920 × 1080 pixels, the 16:9 format of a
 PowerPoint slide, on a white background. It contains:
 
-- date and time, and the text from the field **Note for the PNG** next to
-  the button, for example board, operating point or what was changed,
+- on top the text from the field **Note for the PNG** next to the button,
+  for example board, operating point or what was changed,
 - mode, sample period, number of samples, lost frames or the
   trigger settings, port, baud rate and ELF file,
 - the chart as zoomed on the screen, with the cursors and the factors in the
   legend,
-- the measurement table and the cursor readout.
+- the measurement table and the cursor readout,
+- date and time, small in the bottom right corner.
 
 The picture is drawn on the PC with matplotlib, so it looks the same whatever
 the browser window size.

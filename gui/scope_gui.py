@@ -279,25 +279,25 @@ def measure(t_ms, y):
 def render_png(d):
     """Chart, settings and measurements as a 1920 x 1080 PNG (16:9, a PowerPoint slide). Returns the bytes.
 
-    d: title, note (user text below the title, may be empty), info (lines below), series [(name, x, y)], xlim,
+    d: stamp (time, bottom right), note (user text on top, may be empty), info (lines below), series [(name, x, y)], xlim,
     cursors [(axis, value, label)], columns, rows (measurement table), notes (lines below the table).
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     fig = Figure(figsize=(16, 9), dpi=120)
     FigureCanvasAgg(fig)
-    fig.text(0.03, 0.965, d['title'], fontsize=20, fontweight='bold', va='top')
     shift = 0.045 if d.get('note') else 0
     if shift:
-        fig.text(0.03, 0.912, d['note'], fontsize=15, va='top')
-    fig.text(0.03, 0.915 - shift, '\n'.join(d['info']), fontsize=11, color='#444', va='top', linespacing=1.5)
+        fig.text(0.03, 0.965, d['note'], fontsize=15, va='top')
+    fig.text(0.03, 0.965 - shift, '\n'.join(d['info']), fontsize=11, color='#444', va='top', linespacing=1.5)
+    fig.text(0.97, 0.012, d['stamp'], fontsize=9, color='#888', ha='right', va='bottom')
     # stacked from the bottom: notes, table, x axis label, chart up to the header
     n_rows = len(d['rows'])
     notes_h = 0.03 * len(d['notes'])
     table_y = 0.025 + notes_h
     table_h = min(0.36, 0.03 * (n_rows + 1)) if n_rows else 0
     chart_y = table_y + table_h + 0.075
-    chart_top = 0.90 - shift - 0.03 * len(d['info'])
+    chart_top = 0.95 - shift - 0.03 * len(d['info'])
     ax = fig.add_axes([0.06, chart_y, 0.92, chart_top - chart_y])
     for name, x, y in d['series']:
         ax.plot(x, y, linewidth=1.2, label=name)
@@ -650,7 +650,7 @@ def main_page():
                                                                       if elf.value.strip() else ''))
         label, rows = app.get('meas', ('', []))
         keys = [c['name'] for c in meas_cols if tcur.value or c['name'] not in ('c1', 'c2', 'delta')]
-        d = {'title': f"mini-scope  {time.strftime('%Y-%m-%d %H:%M:%S')}", 'note': (note.value or '').strip(),
+        d = {'stamp': time.strftime('%Y-%m-%d %H:%M:%S'), 'note': (note.value or '').strip(),
              'info': info, 'series': series,
              'xlim': xlim,
              'cursors': cursor_marks(),
@@ -680,14 +680,22 @@ def main_page():
         store(out.getvalue().encode(), 'csv')
 
     with ui.row().classes('items-center'):
-        ui.button('Start', on_click=start, color='positive')
-        ui.button('Stop', on_click=stop, color='negative')
+        start_btn = ui.button('Start', on_click=start, color='positive')
+        stop_btn = ui.button('Stop', on_click=stop, color='grey').props('outline')
         ui.button('Autoscale', on_click=autoscale).props('outline')
         ui.button('Reset', on_click=reset).props('outline')
         ui.button('CSV', on_click=csv).props('outline')
         ui.button('PNG', on_click=lambda: png()).props('outline').tooltip('Chart, settings and measurements as a '
                                                                           '16:9 picture for a slide')
         note = ui.input('Note for the PNG').classes('w-96').tooltip('Goes into the header of the PNG')
+
+    def show_running(on):
+        """Only the button that applies is filled: Start while stopped, Stop while running."""
+        if on == app.get('shown_running'):
+            return
+        app['shown_running'] = on
+        (start_btn if on else stop_btn).props('color=grey outline')
+        (stop_btn if on else start_btn).props(f'color={"negative" if on else "positive"}', remove='outline')
 
     chart = ui.echart({
         'backgroundColor': 'transparent',
@@ -800,6 +808,7 @@ def main_page():
                              if mode.value == 0 else depth.lstrip(' |'))
                 rate.classes(replace='')
         sc = app['scope']
+        show_running(bool(sc and sc.running))
         if not sc or 'active' not in app:
             return
         t, cols = shown()
