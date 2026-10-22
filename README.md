@@ -206,7 +206,9 @@ http://localhost:8080.
 5. **CSV** saves the data shown (comma separated, decimal point).
 
 Zoom in the chart with the mouse wheel or the slider. Clicking a name in the
-legend hides that channel.
+legend hides that channel. **Autoscale** sets the factors so that all channels
+use the same range (the largest channel keeps factor 1, the others get a round
+factor 1/2/5 × 10ⁿ); factors apply at once, also during a measurement.
 
 ## Test project and simulation without hardware
 

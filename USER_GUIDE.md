@@ -92,7 +92,7 @@ From top to bottom the page has these areas:
 | **ELF file** | path to the ELF, **Load** button |
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
 | **Settings** | Stream or Capture, Sample period, trigger |
-| **Buttons** | **Start**, **Stop**, **CSV** |
+| **Buttons** | **Start**, **Stop**, **Autoscale**, **CSV** |
 | **Chart** | curves, legend, zoom slider |
 
 ## 6. Step by step
@@ -136,7 +136,7 @@ hand.
 **Factor** multiplies the value for display. Use it to convert to physical
 units, for example Q15 to amperes, or to bring signals of different magnitude
 onto one scale. The factor only affects the display and the CSV export, not
-the trigger.
+the trigger. A changed factor applies at once, also during a measurement.
 
 Without an ELF file, enter the **Address** directly, for example from the
 `.map` file, and choose the type by hand.
@@ -180,6 +180,12 @@ depth**. Fewer channels mean a longer recording.
 
 ### 6.5 Working with the chart
 
+- **Autoscale:** sets the factors so that all channels use the same range.
+  The channel with the largest values keeps its factor 1; the others get a
+  round factor (1, 2 or 5 × 10ⁿ) that brings them up to it. Channels that are
+  constantly 0 are left alone. It is a snapshot of the data shown: if a
+  signal grows later, click it again. The CSV export then contains the
+  scaled values; set the factors back to 1 for raw values.
 - **Zoom:** mouse wheel in the chart, or drag the slider below it.
 - **Hide a channel:** click its name in the legend.
 - **Read values:** hover over the curve.

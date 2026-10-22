@@ -193,6 +193,13 @@ def close_ports():
         close_port(ser)
 
 
+def nice_factor(x):
+    """Largest 1, 2 or 5 * 10^n that is not above x."""
+    e = math.floor(math.log10(x))
+    m = x / 10 ** e
+    return float(f'{5 if m >= 5 else 2 if m >= 2 else 1}e{e}')
+
+
 def stream_load(rec, period_us, baud):
     """Bytes/s the stream needs, bytes/s the UART carries, shortest period that fits (90 %)."""
     frame = rec + 2                         # sync + seq + channels
@@ -379,7 +386,8 @@ def main_page():
         if mode.value == 0 and need >= 0.9 * have:
             ui.notify(f'Sample period too short for streaming: samples will be lost. '
                       f'Use at least {min_us} µs or Capture.', type='warning', timeout=8000)
-        app['names'], app['factors'] = [s[2] for s in sel], [s[3] for s in sel]
+        app['active'] = [ch for ch in chans if ch['addr']]      # rows being measured
+        app['names'] = [s[2] for s in sel]
         app['mode'], app['period'] = int(mode.value), int(period.value)
         err = await run.io_bound(sc.start, [s[:2] for s in sel], int(mode.value), int(period.value),
                                  int(tch.value), int(ttype.value), int(level.value),
@@ -391,19 +399,47 @@ def main_page():
         if app['scope']:
             await run.io_bound(app['scope'].stop)
 
+    def factors():
+        """Current factors of the channels being measured (edits apply at once)."""
+        return [float(ch['factor'] or 1) for ch in app['active']]
+
+    def shown():
+        """Raw data currently shown: the stream window or the last capture."""
+        t, cols = app['scope'].snapshot()
+        if app['mode'] == 0 and len(t):
+            keep = t > t[-1] - int(window.value or 2000)
+            t, cols = t[keep], [c[keep] for c in cols]
+        return t, cols
+
+    def autoscale():
+        if not app['scope'] or 'active' not in app:
+            ui.notify('Start a measurement first', type='warning')
+            return
+        t, cols = shown()
+        peaks = [float(np.max(np.abs(c.astype(float)))) if len(c) else 0.0 for c in cols]
+        ref = max(peaks, default=0.0)
+        if ref == 0:
+            ui.notify('No data yet', type='warning')
+            return
+        for ch, pk in zip(app['active'], peaks):
+            if pk > 0:                  # the largest channel keeps 1, the others are scaled up to it
+                ch['factor'] = nice_factor(ref / pk)
+        channel_list.refresh()
+
     def csv():
-        if not app['scope']:
+        if not app['scope'] or 'active' not in app:
             return
         t, cols = app['scope'].snapshot()
         out = io.StringIO()
         out.write('t_ms,' + ','.join(app['names']) + '\n')
-        for row in zip(t * app['period'] / 1000, *(c * f for c, f in zip(cols, app['factors']))):
+        for row in zip(t * app['period'] / 1000, *(c * f for c, f in zip(cols, factors()))):
             out.write(','.join(f'{v:g}' for v in row) + '\n')
         ui.download.content(out.getvalue().encode(), 'scope.csv')
 
     with ui.row():
         ui.button('Start', on_click=start, color='positive')
         ui.button('Stop', on_click=stop, color='negative')
+        ui.button('Autoscale', on_click=autoscale).props('outline')
         ui.button('CSV', on_click=csv).props('outline')
 
     chart = ui.echart({
@@ -437,18 +473,15 @@ def main_page():
                              if mode.value == 0 else depth.lstrip(' |'))
                 rate.classes(replace='')
         sc = app['scope']
-        if not sc or 'names' not in app:
+        if not sc or 'active' not in app:
             return
-        t, cols = sc.snapshot()
-        if app['mode'] == 0 and len(t):
-            keep = t > t[-1] - int(window.value or 2000)
-            t, cols = t[keep], [c[keep] for c in cols]
+        t, cols = shown()
         step = max(1, math.ceil(len(t) / MAX_POINTS))
         x = t[::step] * app['period'] / 1000
         chart.options['series'] = [
             {'name': n, 'type': 'line', 'showSymbol': False,
              'data': np.column_stack((x, c[::step] * f)).tolist()}
-            for n, c, f in zip(app['names'], cols, app['factors'])]
+            for n, c, f in zip(app['names'], cols, factors())]
         chart.update()
         status.text = (('running' if sc.running else 'stopped')
                        + (f' | lost frames: {sc.lost}' if app['mode'] == 0 else f' | captures: {sc.captures}'))
