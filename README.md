@@ -132,6 +132,44 @@ TX and RX on the same pin, stop the build with an error message. For a
 completely custom setup, define `SCOPE_PINS_INIT()` yourself before
 `#include "scope.h"`.
 
+**Pin table** for the dsPIC33CK64MC103 (36 pins):
+
+| Port pin | `SCOPE_TX_RP` / `SCOPE_RX_RP` | Package pin (36-pin) | Other functions on the pin | Note |
+|---|---|---|---|---|
+| RB0 | 32 | 17 | OSCI, CLKI, AN5 | not with a crystal or external clock |
+| RB1 | 33 | 18 | OSCO, CLKO, AN6 | not with a crystal |
+| RB2 | 34 | 19 | AN1, AN7, ANA0, CMP1D, OA2OUT, INT0 | analog pin, set to digital automatically |
+| RB3 | 35 | 20 | PGD2, AN8, OA2IN- | ICSP channel 2 |
+| RB4 | 36 | 21 | PGC2, OA2IN+ | ICSP channel 2 |
+| **RB5** | **37** | **24** | **PGD3** | **default TX: ICSP channel 3** |
+| **RB6** | **38** | **25** | **PGC3** | **default RX: ICSP channel 3** |
+| RB7 | 39 | 26 | TDO, AN2 | JTAG must be off (`JTAGEN = OFF`) |
+| RB8 | 40 | 27 | PGD1, AN10, SCL1 | ICSP channel 1, I²C1 |
+| RB9 | 41 | 28 | PGC1, AN11, SDA1 | ICSP channel 1, I²C1 |
+| RB10 | 42 | 33 | TMS, PWM3H | PWM output, JTAG |
+| RB11 | 43 | 34 | TCK, PWM3L | PWM output, JTAG |
+| RB12 | 44 | 35 | TDI, PWM2H | PWM output, JTAG |
+| RB13 | 45 | 36 | PWM2L | PWM output |
+| RB14 | 46 | 1 | PWM1H | PWM output |
+| RB15 | 47 | 2 | PWM1L | PWM output |
+| RC0 | 48 | 4 | AN12 | analog pin, set to digital automatically |
+| RC1 | 49 | 12 | AN13, CMP1B, OA3IN-, ISRC0 | analog pin, set to digital automatically |
+| RC2 | 50 | 13 | AN14, OA3IN+, ISRC1 | analog pin, set to digital automatically |
+| RC3 | 51 | 16 | AN15, IBIAS2 | analog pin, set to digital automatically |
+| RC4 | 52 | 29 | – | free digital pin |
+| RC5 | 53 | 30 | – | free digital pin |
+
+Port A (RA0 … RA4) is not remappable and cannot be used. Source: the device
+description in the dsPIC33CK-MC_DFP pack (`DSPIC33CK64MC103.PIC`); the
+package pin numbers apply to the 36-pin dsPIC33CK64MC103.
+
+Notes:
+
+- If the debugger uses the same ICSP channel (`ICS` configuration bit), do
+  not debug while mini-scope runs on these pins.
+- On motor control boards the PWM pins are usually taken by the power stage.
+
+
 **Adapter:** any 3.3 V USB-UART adapter for 115200 baud will do. On a motor
 board it should be **galvanically isolated**, or the laptop should run on
 battery, so that there is no ground loop.
