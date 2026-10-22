@@ -16,6 +16,7 @@ extern sta_t   U1STAbits;
 extern mode_t_ U1MODEbits;
 extern t1con_t T1CONbits;
 extern uint16_t U1MODE, U1MODEH, U1STA, U1STAH, U1BRG, U1BRGH, T1CON, TMR1, PR1;
+extern volatile uint16_t TRISB, TRISC, ANSELB, ANSELC;
 extern int _U1TXIF, _U1TXIE, _U1RXIF, _U1RXIE, _U1TXIP, _U1RXIP, _T1IF, _T1IE, _T1IP, _GIE;
 extern uint8_t mock_ram[];
 

@@ -20,6 +20,7 @@ sta_t   U1STAbits;
 mode_t_ U1MODEbits;
 t1con_t T1CONbits;
 uint16_t U1MODE, U1MODEH, U1STA, U1STAH, U1BRG, U1BRGH, T1CON, TMR1, PR1;
+volatile uint16_t TRISB, TRISC, ANSELB, ANSELC;
 int _U1TXIF, _U1TXIE, _U1RXIF, _U1RXIE, _U1TXIP, _U1RXIP, _T1IF, _T1IE, _T1IP, _GIE;
 uint8_t mock_ram[0x10000];
 

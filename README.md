@@ -55,7 +55,7 @@ Two modes:
 | `SCOPE_MAX_CH` | 16 | maximum number of channels |
 | `SCOPE_CAPBUF` | 4096 | capture buffer in bytes, 64 to 65535, in practice limited by RAM. The GUI reads the value from the firmware before every start, so it only lives here; nothing to change in the GUI, even after reprogramming. |
 | `SCOPE_TXBUF` | 512 | stream transmit buffer in bytes, power of two |
-| `SCOPE_PINS_INIT()` | RB5/RB6 | UART pins, see below |
+| `SCOPE_TX_RP` / `SCOPE_RX_RP` | 37 / 38 | UART pins as RP numbers, default RB5/RB6 = ICSP header, see below |
 
 **Selecting the UART and the sample clock:** both are at the top of
 `scope.h`. Only the selected modules are used; everything else stays free for
@@ -73,7 +73,7 @@ the application:
 | `SCOPE_NONE` | no timer: call `scope_sample()` yourself, for example at the end of the control ISR. Sampling is then synchronous to the PWM, and the sample period in the GUI must match the ISR period. | – |
 
 The selected UART uses `_UxTXInterrupt` and `_UxRXInterrupt`. All three UARTs
-can be mapped to RB5/RB6 by PPS; `scope.h` sets the codes (U1TX = 1,
+can be mapped to any remappable pin by PPS; `scope.h` sets the codes (U1TX = 1,
 U2TX = 3, U3TX = 27) automatically. An invalid value stops the build with a
 clear error message.
 
@@ -117,7 +117,20 @@ is on the ICSP header, so no rework is needed:
   leave out `scope_init()`, for example with `#ifndef __DEBUG`.
 - Programming always remains possible, because the PICkit enters via MCLR.
 
-Other pins: define `SCOPE_PINS_INIT()` yourself before `#include "scope.h"`.
+Other pins: set the RP numbers in `scope.h`. RB*n* is RP(32 + *n*), RC*n* is
+RP(48 + *n*); RP32 … RP53 are possible on the dsPIC33CK64MC10x.
+
+```c
+#define SCOPE_TX_RP  39    /* RB7 */
+#define SCOPE_RX_RP  40    /* RB8 */
+```
+
+`scope_init()` then sets the PPS registers, the pin directions (TRIS) and
+digital mode (ANSEL) for both pins; the last one matters, because a pin left
+in analog mode reads 0 and the UART receives nothing. Invalid pin numbers, or
+TX and RX on the same pin, stop the build with an error message. For a
+completely custom setup, define `SCOPE_PINS_INIT()` yourself before
+`#include "scope.h"`.
 
 **Adapter:** any 3.3 V USB-UART adapter for 115200 baud will do. On a motor
 board it should be **galvanically isolated**, or the laptop should run on
@@ -206,7 +219,7 @@ in your own code.
 
 | What | Setting | Source |
 |---|---|---|
-| PPS | RP37 (RB5) ← UxTX, UxRX ← RP38 (RB6), RB5 output, RB6 input | data sheet DS70005399D p. 113, 117 |
+| PPS | TX pin ← UxTX, UxRX ← RX pin (default RP37/RB5 and RP38/RB6); TX output, RX input, both digital | data sheet DS70005399D p. 113, 117 |
 | UART | asynchronous 8N1, clock FP (`BCLKSEL = 00`), `BRGH = 1`, `UxBRG = 68` → 115,942 baud (+0.6 %) | p. 272–279 |
 | Interrupts | UART RX/TX priority 1, sample clock priority 2, `GIE = 1` | – |
 | Timer1 | clock FP (`TCS = 0`), prescaler and `PR1` from the sample period sent by the GUI; runs only during a measurement | p. 329–331 |
@@ -223,7 +236,7 @@ UART1 with Timer1 and UART2 with SCCP1 have run in the MPLAB X simulator.
 
 - FP = FOSC/2 must match `SCOPE_FP_HZ`, default 32 MHz. With a different
   clock the baud rate is wrong and no connection is made.
-- The selected UART, the selected timer and the pins RB5/RB6 must not be
+- The selected UART, the selected timer and the two UART pins must not be
   used by the application. The linker reports interrupts defined twice
   (`multiple definition of _T1Interrupt`); then select a free UART or timer in
   `scope.h`.

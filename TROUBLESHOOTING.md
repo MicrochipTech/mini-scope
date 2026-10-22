@@ -97,12 +97,14 @@ the sequence.
 ### 4.4 Something else uses the pins or the UART
 
 - Does your code write the whole `TRISB`, `ANSELB` or a PPS register
-  (`RPOR2`, `RPOR3`, `RPINR18/19/27`) **after** `scope_init()`? Then RB5/RB6
+  (`RPORx`, `RPINR18/19/27`) **after** `scope_init()`? Then the UART pins
   are reconfigured. Move `scope_init()` to the end, or exclude bits 5 and 6.
 - Does your code use the same UART without interrupts (polled)? There is no
   link error in this case, but both parts disturb each other. Select another
   UART with `SCOPE_UART`.
-- Are there other loads on RB5/RB6 on your board (LEDs, pull resistors,
+- With other pins than RB5/RB6: do `SCOPE_TX_RP`/`SCOPE_RX_RP` match the
+  wiring? RB*n* is RP(32 + *n*), RC*n* is RP(48 + *n*).
+- Are there other loads on the UART pins on your board (LEDs, pull resistors,
   filter capacitors)? Strong loads or large capacitors distort the signal.
 
 ### 4.5 Interrupts

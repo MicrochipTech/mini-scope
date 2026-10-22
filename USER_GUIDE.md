@@ -39,8 +39,10 @@ It also works without hardware, see [section 7](#simulation-without-hardware).
    needed.
 3. If your application already uses UART1 or Timer1, select a free one at
    the top of `scope.h`: `SCOPE_UART` 1, 2 or 3, and `SCOPE_TIMER`
-   `SCOPE_T1`, `SCOPE_CCP1` … `SCOPE_CCP4` or `SCOPE_NONE`. The pins stay
-   RB5/RB6.
+   `SCOPE_T1`, `SCOPE_CCP1` … `SCOPE_CCP4` or `SCOPE_NONE`.
+   To use other pins than the ICSP header, set `SCOPE_TX_RP` and
+   `SCOPE_RX_RP` (RB*n* = RP(32 + *n*), RC*n* = RP(48 + *n*)). Direction and
+   digital mode are set automatically.
 4. If RAM is tight, reduce the buffers in `scope.h`. By default mini-scope
    uses about 4.7 KB. With `SCOPE_CAPBUF 1024u`, `SCOPE_TXBUF 256u` and
    `SCOPE_MAX_CH 8` it uses about 1.4 KB. The full table is in `README.md`.

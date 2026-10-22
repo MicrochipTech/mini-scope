@@ -455,6 +455,19 @@ void SCOPE_ISR UxRX_ISR(void)
 
 /* ---------- init ---------- */
 
+void scope_pin_dir(uint8_t rp, uint8_t input)
+{
+    uint16_t bit = (uint16_t)(1u << ((rp - 32u) & 15u));   /* RP32..47 = RB0..15, RP48.. = RC0.. */
+    volatile uint16_t *tris = rp < 48 ? &TRISB : &TRISC;
+    volatile uint16_t *ansel = rp < 48 ? &ANSELB : &ANSELC;
+
+    *ansel &= (uint16_t)~bit;           /* digital, otherwise RX reads 0 on analog pins */
+    if (input)
+        *tris |= bit;
+    else
+        *tris &= (uint16_t)~bit;
+}
+
 void scope_init(void)
 {
     SCOPE_PINS_INIT();

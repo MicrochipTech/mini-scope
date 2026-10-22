@@ -88,15 +88,34 @@
 #error "SCOPE_UART must be 1, 2 or 3"
 #endif
 
-/* default: TX on RP37/RB5 (PGD3), RX on RP38/RB6 (PGC3) = ICSP header */
+/* UART pins as RP numbers: RPn = RB(n-32) for 32..47, RC(n-48) for 48..53.
+ * Default: TX on RP37/RB5 (PGD3), RX on RP38/RB6 (PGC3) = ICSP header.
+ * Direction (TRIS) and digital mode (ANSEL) are set automatically. */
+#ifndef SCOPE_TX_RP
+#define SCOPE_TX_RP      37           /* RB5 */
+#endif
+#ifndef SCOPE_RX_RP
+#define SCOPE_RX_RP      38           /* RB6 */
+#endif
+#if SCOPE_TX_RP < 32 || SCOPE_TX_RP > 53 || SCOPE_RX_RP < 32 || SCOPE_RX_RP > 53
+#error "SCOPE_TX_RP / SCOPE_RX_RP must be 32..53 (RB0..RB15 = RP32..RP47, RC0..RC5 = RP48..RP53)"
+#endif
+#if SCOPE_TX_RP == SCOPE_RX_RP
+#error "SCOPE_TX_RP and SCOPE_RX_RP must be different pins"
+#endif
+
+#define SCOPE_CAT_(a, b, c) a##b##c
+#define SCOPE_CAT(a, b, c)  SCOPE_CAT_(a, b, c)
+
+/* own pin setup: define SCOPE_PINS_INIT() before including scope.h */
 #ifndef SCOPE_PINS_INIT
-#define SCOPE_PINS_INIT() do {                                  \
-        __builtin_write_RPCON(0x0000);  /* unlock PPS */         \
-        _RP37R = SCOPE_UTX_CODE;        /* RP37 = UxTX */        \
-        SCOPE_URXR = 38;                /* UxRX = RP38 */        \
-        __builtin_write_RPCON(0x0800);  /* lock PPS */           \
-        _TRISB5 = 0;                                            \
-        _TRISB6 = 1;                                            \
+#define SCOPE_PINS_INIT() do {                                          \
+        __builtin_write_RPCON(0x0000);              /* unlock PPS */     \
+        SCOPE_CAT(_RP, SCOPE_TX_RP, R) = SCOPE_UTX_CODE;  /* TX pin */   \
+        SCOPE_URXR = SCOPE_RX_RP;                   /* RX pin */         \
+        __builtin_write_RPCON(0x0800);              /* lock PPS */       \
+        scope_pin_dir(SCOPE_TX_RP, 0);                                  \
+        scope_pin_dir(SCOPE_RX_RP, 1);                                  \
     } while (0)
 #endif
 
@@ -105,6 +124,7 @@
 void scope_init(void);
 void scope_sample(void);              /* only needed with SCOPE_TIMER = SCOPE_NONE */
 void scope_rx_byte(uint8_t b);        /* command byte from elsewhere, e.g. the simulator */
+void scope_pin_dir(uint8_t rp, uint8_t input);  /* digital in/out for pin RPn, used by SCOPE_PINS_INIT */
 
 extern volatile uint16_t scope_overflows;   /* stream frames dropped (UART too slow) */
 
