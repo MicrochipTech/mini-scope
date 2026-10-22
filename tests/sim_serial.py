@@ -8,7 +8,8 @@ import os
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SYMBOLS = {'sine': (0x1000, 2), 'ramp': (0x1002, 2), 'counter': (0x1004, 4), 'toggle': (0x1008, 1)}
+SYMBOLS = {'sine': (0x1000, 2), 'ramp': (0x1002, 2), 'counter': (0x1004, 4), 'toggle': (0x1008, 1),
+           'sine_gain': (0x100A, 2), 'ramp_step': (0x100C, 2)}
 
 
 class SimSerial:

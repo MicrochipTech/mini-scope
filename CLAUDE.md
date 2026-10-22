@@ -58,9 +58,10 @@ If the evidence points there, say so plainly and help the customer report it
 | consistency | the demo `counter` increases steadily | torn 32-bit reads, main loop stalled |
 | stream x us | the UART carries the expected rate without losses | TX interrupt, other interrupts above priority 2 blocking mini-scope |
 | capture / trigger | buffer, 10 µs sampling, edge trigger with pretrigger | interrupt load, trigger logic |
+| write | command `W` doubles `ramp_step` during a stream, the ramp gets twice as steep | firmware older than the GUI |
 | reset | command `X` restarts the firmware, also during a stream | firmware without `X`, slow start-up |
 
-The demo variables (`counter`, `ramp`) come from the ELF of `test.X`. With
+The demo variables (`counter`, `ramp`, `ramp_step`) come from the ELF of `test.X`. With
 the customer's own firmware, pass `--elf`; without these variables only the
 checks that need no variables run.
 

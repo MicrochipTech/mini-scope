@@ -4,6 +4,7 @@
  *
  * Demo variables in mock RAM (same names as example_main.c):
  *   0x1000 sine (int16)  0x1002 ramp (uint16)  0x1004 counter (int32)  0x1008 toggle (uint8)
+ *   0x100A sine_gain (int16, Q15)  0x100C ramp_step (uint16)   written from the GUI
  */
 #include <math.h>
 #include <string.h>
@@ -75,6 +76,8 @@ static void tx_drain(int budget)
 EXPORT void sim_init(void)
 {
     memset(mock_ram, 0, sizeof mock_ram);
+    *(int16_t *)&mock_ram[0x100A] = 32767;
+    *(uint16_t *)&mock_ram[0x100C] = 7;
     scope_init();
 }
 
@@ -109,10 +112,11 @@ EXPORT int sim_run(int ticks, uint8_t *dst, int max)
     } else {
         double bytes_per_tick = SCOPE_BAUD / 10.0 * per * 1e-6;
         for (i = 0; i < ticks && out_len < out_max; i++) {
-            int16_t s = (int16_t)(20000 * sin(phase) + 3000 * sin(7 * phase));
+            double gain = *(int16_t *)&mock_ram[0x100A] / 32768.0;
+            int16_t s = (int16_t)(gain * (20000 * sin(phase) + 3000 * sin(7 * phase)));
             phase += 2 * 3.14159265358979 * 50.0 * per * 1e-6;     /* 50 Hz */
             memcpy(&mock_ram[0x1000], &s, 2);
-            (*(uint16_t *)&mock_ram[0x1002]) += 7;
+            (*(uint16_t *)&mock_ram[0x1002]) += *(uint16_t *)&mock_ram[0x100C];
             (*(int32_t *)&mock_ram[0x1004])++;
             mock_ram[0x1008] = s > 0;
             _T1Interrupt();

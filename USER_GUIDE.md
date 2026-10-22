@@ -91,6 +91,7 @@ From top to bottom the page has these areas:
 | **Connection** | Port, Baud, status line, **Connect** button |
 | **ELF file** | path to the ELF, **Load** button |
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
+| **Write variable** | pick a variable (or enter an address), then type a value into the window that opens |
 | **Settings** | Stream or Capture, Sample period, trigger |
 | **Buttons** | **Start**, **Stop**, **Autoscale**, **Reset** (restarts the target firmware), **CSV** |
 | **Chart** | curves, legend, zoom slider |
@@ -190,13 +191,41 @@ depth**. Fewer channels mean a longer recording.
 - **Hide a channel:** click its name in the legend.
 - **Read values:** hover over the curve.
 
-### 6.6 Saving data
+### 6.6 Changing values in the controller
+
+You can write a new value into a variable while the application runs, also
+during a measurement, for example a gain or a set point.
+
+1. Under **Write variable**, pick the variable from the list. Without an ELF,
+   enter its address under **or address** and click **Write ...**.
+2. A window opens. Check the **Type** (`s16` for `int16_t`, `u16` for
+   `uint16_t`, `f32` for `float` and so on), enter the **Value** and click
+   **Write** or press Enter.
+3. The window stays open, so you can try several values one after the other.
+   **Close** closes it.
+
+The value is raw, without the channel factor. The target does not answer the
+write; you see the effect in the curves. Values out of range for the type, and
+odd addresses for 16- and 32-bit variables, are rejected by the user interface.
+
+Two demo variables in `example_main.c` are made for trying this out, best with
+`sine` and `ramp` running as channels in Stream mode:
+
+| Variable | Type | Effect | Default |
+|---|---|---|---|
+| `sine_gain` | s16 | amplitude of `sine`, Q15: 16384 halves it, 0 makes it flat | 32767 |
+| `ramp_step` | u16 | increment of `ramp` per main loop pass: 2 makes the ramp twice as steep | 1 |
+
+**Caution:** writing to the wrong address can crash the application or
+change hardware registers. Only write to variables you know.
+
+### 6.7 Saving data
 
 **CSV** saves the data currently shown, that is the stream window or the last
 recording. The first column is the time in ms; the file is comma separated
 with a decimal point.
 
-### 6.7 Quitting
+### 6.8 Quitting
 
 Click **Stop**, then close the console window or press Ctrl+C.
 

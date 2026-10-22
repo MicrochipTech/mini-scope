@@ -12,6 +12,9 @@
  *   'S'                     stop            -> ACK
  *   'X'                     reset           -> no reply, the firmware restarts
  *                                              (ping until it answers again)
+ *   'W' addr16 w value32    write variable  -> no reply (may come during a stream),
+ *                                              w = width 1, 2 or 4; odd address
+ *                                              for w > 1 or addr >= 0x8000 is ignored
  *
  * Target -> PC:
  *   stream : 0xA5 seq payload            (payload = all channels, rec bytes)
@@ -389,8 +392,30 @@ static void configure(void)
     reply(ACK);
 }
 
+static void write_var(void)
+{
+    uint16_t a = (uint16_t)(rx[1] | ((uint16_t)rx[2] << 8));
+    uint8_t w = rx[3];
+    uint32_t v = (uint32_t)rx[4] | ((uint32_t)rx[5] << 8) |
+                 ((uint32_t)rx[6] << 16) | ((uint32_t)rx[7] << 24);
+    volatile void *p = SCOPE_ADDR(a);
+
+    if (a >= 0x8000u || (w > 1 && (a & 1)))
+        return;                         /* odd address -> address error trap */
+    if (w == 1)
+        *(volatile uint8_t *)p = (uint8_t)v;
+    else if (w == 2)
+        *(volatile uint16_t *)p = (uint16_t)v;
+    else if (w == 4)
+        *(volatile uint32_t *)p = v;
+}
+
 static void command(void)
 {
+    if (rx[0] == 'W') {                 /* accepted in every state: change values while measuring */
+        write_var();
+        return;
+    }
     if (rx[0] == 'X') {                 /* accepted in every state, like 'S' */
         state = IDLE;
         timer_run(0);
@@ -405,7 +430,7 @@ static void command(void)
         reply(ACK);
         return;
     }
-    if (state != IDLE || dump_left)     /* busy: only 'S' and 'X' are accepted */
+    if (state != IDLE || dump_left)     /* busy: only 'S', 'X' and 'W' are accepted */
         return;
 
     switch (rx[0]) {
@@ -440,7 +465,7 @@ static void command(void)
 void scope_rx_byte(uint8_t b)
 {
     if (rx_len == 0)
-        rx_need = (b == 'C') ? 2 : 1;
+        rx_need = (b == 'C') ? 2 : (b == 'W') ? 8 : 1;
     rx[rx_len++] = b;
     if (rx_len == 2 && rx[0] == 'C') {
         if (b == 0 || b > SCOPE_MAX_CH) {

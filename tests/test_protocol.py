@@ -83,4 +83,25 @@ time.sleep(0.2)
 n = sc.ser.lib.sim_resets()
 check(sc.reset() is None and sc.ser.lib.sim_resets() == n + 1, "'X' -> reset, target answers again")
 
+# 'W' writes variables, also while streaming: sine_gain scales the sine, ramp_step sets the ramp slope
+GAIN, STEP = SYMBOLS['sine_gain'][0], SYMBOLS['ramp_step'][0]
+check(sc.start(CH[:2], 0, 2000) is None, 'stream for the write test')
+time.sleep(1.0)
+t, (sine, ramp) = sc.snapshot()
+amp0, slope0 = np.abs(sine).max(), np.median(np.diff(ramp.astype(np.int64)) % 65536)
+check(sc.write(GAIN, 's16', 16384) is None and sc.write(STEP, 'u16', 14) is None, 'write while streaming')
+time.sleep(0.3)
+n = len(sc.snapshot()[0])
+time.sleep(1.0)
+t, (sine, ramp) = sc.snapshot()
+amp1, slope1 = np.abs(sine[n:]).max(), np.median(np.diff(ramp[n:].astype(np.int64)) % 65536)
+sc.stop()
+check(abs(amp1 / amp0 - 0.5) < 0.02, f'sine_gain 16384 halves the sine: {amp0} -> {amp1}')
+check(slope1 == 2 * slope0, f'ramp_step 14 doubles the ramp slope: {slope0} -> {slope1}')
+check(sc.write(STEP + 1, 'u16', 1) is not None, 'write to an odd address rejected by the GUI')
+check(sc.write(STEP, 'u16', 70000) is not None and sc.write(STEP, 'u16', 1.5) is not None,
+      'value out of range / not whole rejected by the GUI')
+sc.ser.write(b'W' + (STEP + 1).to_bytes(2, 'little') + bytes([2]) + bytes(4))
+check(sc.ping(), "target ignores 'W' with an odd address and still answers")
+
 sys.exit(1 if getattr(check, 'failed', False) else 0)

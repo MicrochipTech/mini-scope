@@ -88,6 +88,8 @@ The demo signals from `example_main.c` are a good start:
 | `ramp` | u16 | sawtooth 0 … 65535 (shown as `s16` it jumps at 32767) |
 | `counter` | s32 | counts every pass of the main loop |
 | `toggle` | u8 | alternates between 0 and 1 |
+| `sine_gain` | s16 | written from the GUI (**Write variable**): amplitude of `sine`, Q15 |
+| `ramp_step` | u16 | written from the GUI: slope of `ramp` |
 
 The list also contains the internal variables of `scope.c` (`head`, `tail`,
 `state` …). You normally do not need them.

@@ -15,6 +15,8 @@ volatile int16_t  sine;             /* demo signals, pick them in the GUI */
 volatile uint16_t ramp;
 volatile int32_t  counter;
 volatile uint8_t  toggle;
+volatile int16_t  sine_gain = 32767;   /* written from the GUI: sine amplitude, Q15 (32767 = 1.0) */
+volatile uint16_t ramp_step = 1;       /* written from the GUI: ramp increment per main loop pass */
 
 #ifdef __MPLAB_DEBUGGER_SIMULATOR
 /* The simulator's UART cannot receive: tools/mdb_serial.py writes the command
@@ -56,8 +58,9 @@ int main(void)
         uint16_t k = i >> 8;            /* slow the demo signals down */
         int16_t v = table[k & 31];
 
+        v = (int16_t)(((int32_t)v * sine_gain) >> 15);
         sine = (k & 32) ? -v : v;       /* one store: the sampling ISR never sees a half update */
-        ramp = i;
+        ramp += ramp_step;
         counter++;
         toggle = k & 1;
         i++;

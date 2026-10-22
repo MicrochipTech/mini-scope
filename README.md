@@ -207,7 +207,12 @@ http://localhost:8080.
    every capture.
    In stream mode, an orange warning appears when the sample period is too
    short for the UART, with the shortest period that still fits.
-5. **CSV** saves the data shown (comma separated, decimal point).
+5. **Write variable:** pick a variable, or enter an address, and type a
+   value into the window that opens. The value is written into the
+   controller at once, also during a measurement. The demo variables
+   `sine_gain` (sine amplitude, Q15) and `ramp_step` (slope of the ramp)
+   show the effect.
+6. **CSV** saves the data shown (comma separated, decimal point).
 
 Zoom in the chart with the mouse wheel or the slider. Clicking a name in the
 legend hides that channel. **Autoscale** sets the factors so that all channels
@@ -224,7 +229,8 @@ factor 1/2/5 × 10ⁿ); factors apply at once, also during a measurement.
 - **sim:** for the MPLAB X simulator, with the macro
   `__MPLAB_DEBUGGER_SIMULATOR`.
 
-The demo variables are `sine`, `ramp`, `counter` and `toggle`.
+The demo variables are `sine`, `ramp`, `counter` and `toggle`, plus
+`sine_gain` and `ramp_step` to try out writing from the GUI.
 
 There are two ways to run without hardware:
 
@@ -250,7 +256,7 @@ modelled registers as a DLL. Data arrives in real time.
 ```
 gcc -O2 -shared -Itests/mock -Ifirmware -o tests/sim.dll tests/mock/sim.c firmware/scope.c
 start_gui.bat --sim                      (port "SIM", leave the ELF field empty, Load)
-.venv\Scripts\python tests\test_protocol.py   (23 automatic checks)
+.venv\Scripts\python tests\test_protocol.py   (30 automatic checks)
 ```
 
 The paths to MPLAB X v6.35, XC-DSC v3.30 and the DFP are at the top of
@@ -294,6 +300,11 @@ UART1 with Timer1 and UART2 with SCCP1 have run in the MPLAB X simulator.
   writes in between, a single value can be torn.
 - SFRs can be entered as well. Avoid registers with read side effects (for
   example `UxRXREG`).
+- Writing a variable sends no answer, because it may arrive in the middle of
+  a stream; the GUI checks address and value range before sending. A 32-bit
+  value is written in two 16-bit steps, so code that reads it at that moment
+  can see a mix of old and new value. Writes to SFRs work, but take effect
+  immediately on the hardware.
 - The trigger compares raw integer values; an f32 channel cannot be the
   trigger.
 - Very short sample periods (a few µs) load the CPU noticeably, because every

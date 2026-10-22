@@ -98,6 +98,19 @@ class Scope:
                     return None
         return 'Target does not answer after the reset'
 
+    def write(self, addr, typ, value):
+        """Writes value into the variable at addr ('W', no reply). Returns an error text or None."""
+        dt = np.dtype(TYPES[typ])
+        if not 0 <= addr < 0x8000 or (dt.itemsize > 1 and addr & 1):
+            return 'The address must be below 0x8000, and even for 16- and 32-bit variables'
+        if dt.kind in 'iu':
+            lim = np.iinfo(dt)
+            if value != int(value) or not lim.min <= value <= lim.max:
+                return f'{typ} takes whole numbers from {lim.min} to {lim.max}'
+        raw = np.array([value], dtype=dt).tobytes()
+        self.ser.write(struct.pack('<cHB', b'W', addr, dt.itemsize) + (raw + bytes(4))[:4])
+        return None
+
     def start(self, chans, mode, period_us, tch=0, ttype=0, level=0, pre_pct=0, auto=True):
         """chans: list of (address, type), pre_pct: pretrigger in %. Returns an error text or None."""
         self.stop()
@@ -251,7 +264,7 @@ def _open_port(name, baud, progress):
 
 
 def main_page():
-    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None}
+    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'written': {}}
     chans = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1}]
     ports = ([p.device for p in serial.tools.list_ports.comports()]
              + (['SIM'] if ARGS.sim else []) + (['MDB'] if ARGS.mdb else []))
@@ -320,6 +333,7 @@ def main_page():
                 app['syms'] = load_symbols(path) if path or not ARGS.sim else sim_symbols()
                 elf_info.text = f"{len(app['syms'])} variables"
                 channel_list.refresh()
+                write_row.refresh()
             except Exception as e:      # noqa: BLE001
                 elf_info.text = f'Error: {e}'
 
@@ -365,6 +379,56 @@ def main_page():
     with ui.card().classes('w-full'):
         ui.label('Channels').classes('font-bold')
         channel_list()
+
+    # ---- write variables ----
+    def open_write(name, addr, typ):
+        async def do_write():
+            if not app['scope']:
+                ui.notify('Connect first', type='warning')
+                return
+            if value.value is None:
+                return
+            err = await run.io_bound(app['scope'].write, addr, wtype.value, value.value)
+            if err:
+                ui.notify(err, type='negative')
+            else:
+                app['written'][addr] = value.value
+                ui.notify(f'{name} = {value.value:g}', type='positive')
+
+        with ui.dialog() as dlg, ui.card():
+            ui.label(f'Write {name}  (0x{addr:04X})').classes('font-bold')
+            with ui.row().classes('items-center'):
+                wtype = ui.select(list(TYPES), value=typ, label='Type').classes('w-24')
+                value = ui.number('Value', value=app['written'].get(addr)).classes('w-40')                     .on('keydown.enter', do_write)
+            with ui.row():
+                ui.button('Write', on_click=do_write)
+                ui.button('Close', on_click=dlg.close).props('outline')
+        dlg.on_value_change(lambda e: None if e.value else dlg.delete())
+        dlg.open()
+
+    @ui.refreshable
+    def write_row():
+        with ui.row().classes('items-center'):
+            def pick(e):
+                if e.value in app['syms']:
+                    a, size = app['syms'][e.value]
+                    e.sender.value = None           # the same variable can be picked again
+                    open_write(e.value, a, DEFAULT_TYPE[size])
+            if app['syms']:
+                ui.select({n: f'{n}  (0x{a:04X}, {s} B)' for n, (a, s) in app['syms'].items()},
+                          label='Variable', with_input=True, on_change=pick).classes('w-72')
+            addr = ui.input('or address').classes('w-28')
+
+            def by_addr():
+                try:
+                    open_write(addr.value, int(addr.value, 0), 's16')
+                except ValueError:
+                    ui.notify('Enter an address such as 0x1234', type='warning')
+            ui.button('Write ...', on_click=by_addr).props('outline')
+
+    with ui.card().classes('w-full'):
+        ui.label('Write variable').classes('font-bold')
+        write_row()
 
     # ---- settings ----
     with ui.card().classes('w-full'):

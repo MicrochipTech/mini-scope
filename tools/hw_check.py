@@ -4,7 +4,7 @@
     .venv\\Scripts\\python tools\\hw_check.py --port COM5 --loopback     adapter only, TX and RX bridged
 
 Program test.X first (production build) and disconnect the PICkit. The demo
-variables of example_main.c (counter, ramp) are taken from the ELF; without
+variables of example_main.c (counter, ramp, ramp_step) are taken from the ELF; without
 them only the checks that need no variables run. --port SIM runs against the
 PC model (tests/sim.dll) to try out this script.
 
@@ -173,6 +173,29 @@ def check_capture(sc, chans, ramp_col):
                    f'pretrigger {i0} samples', 'TROUBLESHOOTING.md 6')
 
 
+def check_write(sc, ramp, step_addr):
+    """Doubles ramp_step while streaming the ramp: the slope must double."""
+    def slope(t, r):
+        return float(np.median(np.diff(r.astype(np.int64)) % 65536 / np.diff(t))) if len(t) > 10 else 0.0
+    if sc.write(step_addr, 'u16', 1) or sc.start([ramp], 0, 1000):
+        result('FAIL', 'write', 'could not start')
+        return
+    time.sleep(2.0)
+    t, (r,) = sc.snapshot()
+    s1 = slope(t, r)
+    sc.write(step_addr, 'u16', 2)
+    time.sleep(0.5)
+    n = len(sc.snapshot()[0])
+    time.sleep(2.0)
+    t, (r,) = sc.snapshot()
+    s2 = slope(t[n:], r[n:])
+    sc.stop()
+    sc.write(step_addr, 'u16', 1)
+    ok = s1 > 0 and abs(s2 / s1 - 2) < 0.2
+    result('OK' if ok else 'FAIL', 'write', f'ramp_step 1 -> 2 while streaming: ramp slope {s1:.0f} -> {s2:.0f} per sample',
+           'the W command does not arrive or does not write: firmware older than the GUI?')
+
+
 def first_counter(sc, ch):
     t, cols, _ = stream(sc, [ch], 1000, 1.0)
     return int(cols[0][0]) if t is not None and len(t) else None
@@ -256,6 +279,8 @@ def run_checks(a):
         check_clock(sc, chans, 0 if counter else None, a.secs)
         check_rates(sc, chans, baud)
         check_capture(sc, chans, chans.index(ramp) if ramp else None)
+        if ramp and 'ramp_step' in syms:
+            check_write(sc, ramp, syms['ramp_step'][0])
         check_reset(sc, counter, restarts=a.port != 'SIM')
     finally:
         sc.stop()
