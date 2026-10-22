@@ -22,3 +22,5 @@ doctor_report.txt
 hw_report.txt
 /*.pdf
 /mini-scope.json
+/mini-scope_*.csv
+/mini-scope_*.png

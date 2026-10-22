@@ -214,7 +214,10 @@ http://localhost:8080.
    show the effect.
 6. **CSV** saves the data shown (comma separated, decimal point). **PNG** saves a
    1920 × 1080 picture (16:9, a PowerPoint slide) with the zoomed chart, the
-   cursors, the measurement table and the settings.
+   cursors, the measurement table and the settings; the text in **Note for
+   the PNG** goes into its header. Both go into the folder of
+   the settings file in use (normally the project folder), named
+   `mini-scope_<date>_<time>.csv/.png`.
 7. **Save** (next to the title) stores all settings in `mini-scope.json` in
    the project folder, which is loaded at every start. **Save as ...** and
    **Load from ...** use a file of your choice.

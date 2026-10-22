@@ -279,22 +279,25 @@ def measure(t_ms, y):
 def render_png(d):
     """Chart, settings and measurements as a 1920 x 1080 PNG (16:9, a PowerPoint slide). Returns the bytes.
 
-    d: title, info (lines below the title), series [(name, x, y)], xlim, cursors [(axis, value, label)],
-    columns, rows (measurement table), notes (lines below the table).
+    d: title, note (user text below the title, may be empty), info (lines below), series [(name, x, y)], xlim,
+    cursors [(axis, value, label)], columns, rows (measurement table), notes (lines below the table).
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     fig = Figure(figsize=(16, 9), dpi=120)
     FigureCanvasAgg(fig)
     fig.text(0.03, 0.965, d['title'], fontsize=20, fontweight='bold', va='top')
-    fig.text(0.03, 0.915, '\n'.join(d['info']), fontsize=11, color='#444', va='top', linespacing=1.5)
+    shift = 0.045 if d.get('note') else 0
+    if shift:
+        fig.text(0.03, 0.912, d['note'], fontsize=15, va='top')
+    fig.text(0.03, 0.915 - shift, '\n'.join(d['info']), fontsize=11, color='#444', va='top', linespacing=1.5)
     # stacked from the bottom: notes, table, x axis label, chart up to the header
     n_rows = len(d['rows'])
     notes_h = 0.03 * len(d['notes'])
     table_y = 0.025 + notes_h
     table_h = min(0.36, 0.03 * (n_rows + 1)) if n_rows else 0
     chart_y = table_y + table_h + 0.075
-    chart_top = 0.90 - 0.03 * len(d['info'])
+    chart_top = 0.90 - shift - 0.03 * len(d['info'])
     ax = fig.add_axes([0.06, chart_y, 0.92, chart_top - chart_y])
     for name, x, y in d['series']:
         ax.plot(x, y, linewidth=1.2, label=name)
@@ -366,7 +369,7 @@ def _open_port(name, baud, progress):
 
 
 def main_page():
-    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'cur': [None, None]}
+    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'cur': [None, None], 'cfg': CONFIG}
     chans = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1}]
     new_write = lambda: {'name': '', 'addr': '', 'type': 's16', 'value': None}    # noqa: E731
     writes = [new_write()]
@@ -647,15 +650,25 @@ def main_page():
                                                                       if elf.value.strip() else ''))
         label, rows = app.get('meas', ('', []))
         keys = [c['name'] for c in meas_cols if cur_mode.value == 'time' or c['name'] not in ('c1', 'c2', 'delta')]
-        d = {'title': f"mini-scope  {time.strftime('%Y-%m-%d %H:%M:%S')}", 'info': info, 'series': series,
+        d = {'title': f"mini-scope  {time.strftime('%Y-%m-%d %H:%M:%S')}", 'note': (note.value or '').strip(),
+             'info': info, 'series': series,
              'xlim': xlim,
              'cursors': [('x' if cur_mode.value == 'time' else 'y', v, f'C{i + 1}')
                          for i, v in enumerate(app['cur']) if v is not None and cur_mode.value != 'off'],
              'columns': [c['label'] for c in meas_cols if c['name'] in keys],
              'rows': [[r.get(k, '') for k in keys] for r in rows],
              'notes': [n for n in (label, cur_info.text) if n]}
-        data = await run.io_bound(render_png, d)
-        ui.download.content(data, f"mini-scope_{time.strftime('%Y%m%d_%H%M%S')}.png")
+        store(await run.io_bound(render_png, d), 'png')
+
+    def store(data, ext):
+        """Saves next to the settings file in use, with a time stamp in the name."""
+        path = os.path.join(os.path.dirname(app['cfg']), f"mini-scope_{time.strftime('%Y%m%d_%H%M%S')}.{ext}")
+        try:
+            with open(path, 'wb') as f:
+                f.write(data)
+            ui.notify(f'Saved {path}', type='positive')
+        except OSError as e:
+            ui.notify(f'Could not save: {e}', type='negative')
 
     def csv():
         if not app['scope'] or 'active' not in app:
@@ -665,9 +678,9 @@ def main_page():
         out.write('t_ms,' + ','.join(app['names']) + '\n')
         for row in zip(t * app['period'] / 1000, *(c * f for c, f in zip(cols, factors()))):
             out.write(','.join(f'{v:g}' for v in row) + '\n')
-        ui.download.content(out.getvalue().encode(), 'scope.csv')
+        store(out.getvalue().encode(), 'csv')
 
-    with ui.row():
+    with ui.row().classes('items-center'):
         ui.button('Start', on_click=start, color='positive')
         ui.button('Stop', on_click=stop, color='negative')
         ui.button('Autoscale', on_click=autoscale).props('outline')
@@ -675,6 +688,7 @@ def main_page():
         ui.button('CSV', on_click=csv).props('outline')
         ui.button('PNG', on_click=lambda: png()).props('outline').tooltip('Chart, settings and measurements as a '
                                                                           '16:9 picture for a slide')
+        note = ui.input('Note for the PNG').classes('w-96').tooltip('Goes into the header of the PNG')
 
     chart = ui.echart({
         'backgroundColor': 'transparent',
@@ -796,7 +810,7 @@ def main_page():
     # ---- settings file: Save writes mini-scope.json, which is loaded at start ----
     def settings():
         return {'port': port.value, 'baud': baud.value, 'elf': elf.value, 'channels': chans, 'writes': writes,
-                'mode': mode.value, 'period': period.value, 'window': window.value,
+                'mode': mode.value, 'period': period.value, 'window': window.value, 'note': note.value,
                 'trigger': {'channel': tch.value, 'edge': ttype.value, 'threshold': level.value,
                             'pretrigger': pre.value, 'auto_rearm': auto.value}}
 
@@ -810,6 +824,7 @@ def main_page():
         chans[:] = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1, **c} for c in cfg.get('channels', chans)]
         writes[:] = [{**new_write(), **w} for w in cfg.get('writes', writes)]
         mode.value = cfg.get('mode', mode.value)
+        note.value = cfg.get('note', note.value)
         period.value = cfg.get('period', period.value)
         window.value = cfg.get('window', window.value)
         trig = cfg.get('trigger', {})
@@ -828,6 +843,7 @@ def main_page():
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(settings(), f, indent=2)
+            app['cfg'] = path                   # CSV and PNG go next to it
             ui.notify(f'Settings saved to {path}', type='positive')
         except OSError as e:
             ui.notify(f'Could not save: {e}', type='negative')
@@ -836,6 +852,7 @@ def main_page():
         try:
             with open(path, encoding='utf-8') as f:
                 apply(json.load(f))
+            app['cfg'] = path
             if not quiet:
                 ui.notify(f'Settings loaded from {path}', type='positive')
         except (OSError, ValueError, TypeError, AttributeError) as e:
