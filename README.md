@@ -26,6 +26,8 @@ scripts come with mini-scope in [`scripts/`](scripts/), and
 [SCRIPTING.md](SCRIPTING.md) explains how to adapt them. The block diagram
 [docs/tooling_diagram.png](docs/tooling_diagram.png) shows how the parts fit together.
 
+![Results of a tuning script: comparison table, overlay, summary](docs/script_results.png)
+
 **Status:** mini-scope and the scripts have run in a PC model and in the MPLAB X
 simulator only. **They have never run on real hardware.** Every result and figure in
 these documents rests on simulation.
