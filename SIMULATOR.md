@@ -1,7 +1,7 @@
 ---
 title: "mini-scope – Simulator Guide"
 subtitle: "Testing firmware and user interface without hardware"
-date: "October 22, 2026"
+date: "November 3, 2026"
 ---
 
 ## 1. What this is about
@@ -22,12 +22,16 @@ scope_gui.py  ──  tools/mdb_serial.py  ──  MDB (MPLAB X command line deb
                                        firmware test.X (configuration "sim")
 ```
 
-- **PC → firmware:** the simulator's UART cannot receive. `mdb_serial.py`
-  therefore writes the commands via MDB directly into a mailbox in RAM
+- **PC → firmware:** the simulator's UART has no input file for MDB.
+  `mdb_serial.py` therefore writes the commands via MDB directly into a mailbox in RAM
   (`sim_rx`, `sim_rx_len` in `example_main.c`), where the firmware picks them
   up.
 - **Firmware → PC:** whatever the firmware sends over its UART, the simulator
   writes to a file. `mdb_serial.py` reads that file as it grows.
+
+**Status:** the simulator shows whether the firmware logic is right. It proves
+nothing about timing, pins or the clock of a real chip. mini-scope has never run on
+real hardware; every figure in this guide was measured in the simulator.
 
 ## 2. Requirements
 
@@ -111,17 +115,50 @@ curve appears after a few seconds.
 4. Uncheck **Auto re-arm** if you want a single recording.
 5. Click **Start**.
 
-The recording appears after 10–30 s; the trigger is at 0 ms.
+The recording appears after 10–30 s; the trigger is at 0 ms. Capture periods
+below 10 µs are refused.
+
+### Tuning scripts
+
+The example firmware has a virtual motor (`firmware/tune_model.h`), so the tuning
+scripts run in the simulator as well. In the **Script** tab, select a script, click
+**Check**, then **Probe**, then **Run**. Without the GUI:
+
+```
+.venv\Scripts\python tools\run_script.py --port MDB --elf test.X\dist\sim\production\test.X.production.elf scripts\tune_startup.py
+```
+
+`tune_startup.py` takes about 3.5 minutes there. The table is the same as on the PC
+model; times differ by up to one poll step (10 ms). `run.txt` in the run folder
+shows on its port line for how many simulator processes power throttling was
+switched off.
 
 ![Capture in the simulator](docs/capture.png)
 
 ## 6. What is different in the simulator
 
-- **Speed:** the simulator runs about 25 times slower than real time, so 1 s
-  of simulated time takes about 25 s. The time axis in the user interface
+- **Speed:** the simulator runs 14 to 17 times slower than real time (the port
+  plans with 25), so 1 s of simulated time takes about 15 s. The time axis in the user interface
   shows the **simulated** time and is therefore correct.
-- **Delay:** data appears a few seconds late, because the simulator writes
-  the UART file in blocks.
+- **Delay:** the simulator writes the UART file as it goes: it grows by 1 to 7
+  bytes at a time, with pauses of at most 22 ms (measured). The stream is not
+  held back in blocks; it only runs as slowly as the simulator.
+- **Power throttling:** Windows treats a process without a window as
+  background work and may switch it to its power saving mode at any moment.
+  The simulator then needs 45 to 60 s per simulated second instead of 14,
+  and flips between the two while it runs. After loading the firmware,
+  `full_speed()` in `tools\mdb_serial.py` turns this off for the simulator
+  processes. Measured with it: 13.8 to 16.8 s per simulated second, so the
+  factor 25 of the port covers it. `run.txt` of a script run says on its port
+  line for how many processes it worked; with 0 it warns that the simulator
+  may run up to 4 times slower.
+- **Standby:** if the PC goes into Modern Standby during a script run, the run
+  stops. The safe end runs after wake-up. Keep the PC awake during long runs.
+- **Rare events with unknown cause:** in long test series on MDB, three events
+  were seen once each and never again: the stream stopped during the probe, the
+  first ping got no answer, and a GUI page lost its connection during a run. Each
+  ended safely, with the safe values written and read back. Their cause is not
+  known. If one happens, start the run again.
 - **Stop takes time:** after **Stop** the user interface waits about 6 s
   until no late bytes arrive.
 - **Reset:** **Reset** restarts the firmware with the `reset` instruction, as on
@@ -130,6 +167,20 @@ The recording appears after 10–30 s; the trigger is at 0 ms.
 - **No hardware effects:** noise, timing on real pins and the behaviour of the
   PICkit cannot be checked in the simulator. It only shows whether the
   firmware logic is right.
+- **Receive path:** an SCL stimulus with `packetin` on `U1RXREG` reaches
+  `UxRX_ISR`, and ping, `W` and a stream give the same answers as through the
+  mailbox (docs/evidence/M7a.md). The simulator raises the RX interrupt only
+  once per two bytes and sets no `OERR` when the FIFO overflows. The data sheet
+  says one byte is enough with `URXISEL = 0` (page 278).
+- **TX interrupt:** the simulator never sets `U1TXIF` by itself, not even when
+  the UART is switched on. Without the software kicks not a single byte leaves.
+  The firmware therefore sets the flag in software (`tx_kick()`, and every
+  100 µs in the model interrupt of `example_main.c`).
+
+Not proven in simulation, only on a real chip: the clock wait loops in
+`clock_init()` (compiled out), the real frequency of FRC and PLL, the TX
+interrupt of `UTXISEL = 7` without software kick, an RX interrupt per single
+byte, `OERR`, framing errors, the pins, PPS and the baud rate on the wire.
 
 ## 7. Testing your own code in the simulator
 
@@ -174,7 +225,8 @@ its command line.
 | Window says "Build failed" | error in the firmware: see `test.X\build_sim.log` |
 | Port **MDB** missing from the list | the user interface was not started with `start_sim.bat` |
 | Progress stalls for more than 90 s, then "Error" | check the paths in `tools\mdb_serial.py`. An old MDB process may block; end it as in section 8 and start again. |
-| "MDB: firmware does not respond" | the mailbox polling in the main loop is missing, or the firmware hangs in a wait loop (see section 7, step 3) |
+| "the firmware in the simulator sent nothing within 90 s" (after about 110 s; `hw_check.py` and `run_script.py` print it as a FAIL or ERROR line) | the firmware hangs before `scope_init()` (a wait loop), the TX path is dead (`tx_kick()` missing, see section 6), the mailbox polling in the main loop is missing, or the ELF is not a sim build (section 7, step 3) |
+| "the simulator did not report ... within ... s" | MPLAB X is missing or in another place (`MPLABX` in `tools\mdb_serial.py`), an old MDB process blocks it, or the ELF could not be loaded |
 | Curve stays empty, status "running" | wait a few seconds. If nothing comes, **Load** the ELF again and reselect the channels. |
 | No capture appears | the threshold is never crossed: try edge **none** |
 | Page stops responding | press F5 and click **Connect** again. This starts a new simulator; the old one ends when the user interface is closed. |
@@ -193,3 +245,19 @@ start_gui.bat --sim
 Select port **SIM**, click **Connect**, leave the ELF field empty and click
 **Load**. `gcc` is available for example through MinGW. The DLL only needs
 rebuilding after changes to `scope.c`.
+
+## 11. What was compared in simulation
+
+All of this is simulation, nothing is proven on hardware. Details are in
+`docs/evidence/M7e.md` and `docs/evidence/M7e-2.md`.
+
+- **Broken variants.** A wrong 16 bit write of a 4 byte value, a wrong 32 bit write
+  of a 2 byte value and exchanged trigger edges (PC model), and a firmware without
+  `tx_kick()` (MDB) were each caught by the tests. The firmware without `tx_kick()`
+  ends the start-up with the message "the firmware in the simulator sent nothing
+  within 90 s".
+- **PC model against MDB.** All three scripts give the same table on both ports:
+  status and counts equal, times within one poll step, overshoot within one count
+  step. `tuning.h` is the same on both.
+- **100 runs in a row on the PC model.** One process: working set 98.8 MB at the
+  start, 106.2 MB after 100 runs, no thread left. Stable.

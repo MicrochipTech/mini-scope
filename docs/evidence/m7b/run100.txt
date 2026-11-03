@@ -1,0 +1,37 @@
+MDB started in 31 s, oscillator.frequency 200 MHz, power throttling off for 2 processes
+FP 100 MHz, control ISR burn 2949 cycles per pass of 5000
+ping ok, capture buffer 4096 bytes, max 16 channels
+A load off, mini-scope idle:  idle/cycle 0.029412, idle/s 2941156, 2.009 s target, Stopwatch 200873649 cycles
+a kick only, mini-scope idle:  idle/cycle 0.029106, idle/s 2910565, 2.008 s target, Stopwatch 200797598 cycles
+B load on, mini-scope idle:   idle/cycle 0.011763, idle/s 1176332, 2.029 s target, Stopwatch 202915160 cycles
+  isr_len, last pass (FP ticks between the first and the last read of the time base): 2970
+  control ISR share 60.00 % of the cycles = 3000.2 cycles of 5000 per pass
+  C load on, stream 1 ms, 4 channels: frames 20021 (sample index span 20021), lost 0, resyncs 0, scope_overflows 0
+    frames expected from the time stamps 20017.0; spacing of neighbours min 271 / mean 24995.00 / max 25003 ticks of FP/4 (nominal 25000); window 20.01 s target time
+C load on, stream 1 ms:       idle/cycle 0.011379, idle/s 1137917, 20.006 s target, Stopwatch 2000602013 cycles
+  D load off, stream 1 ms, 4 channels: frames 4023 (sample index span 4023), lost 0, resyncs 0, scope_overflows 0
+    frames expected from the time stamps 4023.0; spacing of neighbours min 24999 / mean 25000.00 / max 25001 ticks of FP/4 (nominal 25000); window 4.01 s target time
+D load off, stream 1 ms:      idle/cycle 0.028709, idle/s 2870914, 4.012 s target, Stopwatch 401239798 cycles
+  control load on
+  capture 100 us with trigger: 512 samples, spacing min 2500 / mean 2500.00 / max 2500 ticks of FP/4 (nominal 2500.0), pretrigger 102 samples, time stamp 28890 -> 31390 through 30000: OK
+  control load on
+  capture 40 us with trigger: 512 samples, spacing min 375 / mean 998.78 / max 1250 ticks of FP/4 (nominal 1000.0), pretrigger 102 samples, time stamp 29622 -> 30622 through 30000: OK
+  control load on
+  capture 20 us with trigger: 512 samples, spacing min 92 / mean 624.43 / max 1158 ticks of FP/4 (nominal 500.0), pretrigger 102 samples, time stamp 28917 -> 30049 through 30000: OK
+  control load on
+  capture 10 us with trigger: 512 samples, spacing min 95 / mean 416.04 / max 913 ticks of FP/4 (nominal 250.0), pretrigger 102 samples, time stamp 29580 -> 30493 through 30000: OK
+  control load off
+  capture 40 us with trigger: 512 samples, spacing min 999 / mean 1000.00 / max 1001 ticks of FP/4 (nominal 1000.0), pretrigger 102 samples, time stamp 29990 -> 30990 through 30000: OK
+  control load off
+  capture 20 us with trigger: 512 samples, spacing min 499 / mean 500.00 / max 501 ticks of FP/4 (nominal 500.0), pretrigger 102 samples, time stamp 29693 -> 30193 through 30000: OK
+  control load off
+  capture 10 us with trigger: 512 samples, spacing min 250 / mean 250.00 / max 250 ticks of FP/4 (nominal 250.0), pretrigger 102 samples, time stamp 29837 -> 30087 through 30000: OK
+  control load off
+  capture 5 us with trigger: 512 samples, spacing min 124 / mean 125.00 / max 126 ticks of FP/4 (nominal 125.0), pretrigger 102 samples, time stamp 29898 -> 30024 through 30000: OK
+Use of the cycles, idle/cycle lost against A (load off, mini-scope idle):
+  a: 1.04 %
+  B: 60.00 %
+  C: 61.31 %
+  D: 2.39 %
+  mini-scope stream with the load on: 3.27 % of the cycles left by the load (C against B)
+  mini-scope stream without the load: 1.36 % of the cycles (D against a)

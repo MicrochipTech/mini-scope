@@ -270,7 +270,7 @@ static int32_t trig_value(const uint8_t *r)
 
 static void capture_done(void)
 {
-    state = IDLE;                       /* timer keeps running and pumps the dump */
+    state = IDLE;                       /* timer keeps running and moves the dump out */
     tx_put(SYNC_CAPTURE);
     tx_put((uint8_t)depth);
     tx_put((uint8_t)(depth >> 8));
@@ -302,7 +302,7 @@ void scope_sample(void)
         if (tx_free() < rec_len + 2u) {
             scope_overflows++;
             seq++;                      /* PC sees the gap */
-            tx_kick();                  /* keep pumping: in the simulator the TX IRQ does not re-trigger */
+            tx_kick();                  /* keep the TX going: in the simulator the TX IRQ does not re-trigger */
             return;
         }
         read_ch(rec);

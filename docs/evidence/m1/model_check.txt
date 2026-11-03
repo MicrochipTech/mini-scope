@@ -1,0 +1,67 @@
+== one start in detail (rate 100)
+  t=  1 ms state 0 -> 1 speed 0 iq 0 fault 0
+  t=101 ms state 1 -> 2 speed 0 iq 400 fault 0
+  t=161 ms state 2 -> 3 speed 600 iq 400 fault 0
+== tune_startup.py: align 400, handover 600
+rate  t_align t_ramp t_closed fault@ms  max_iq stop_ms
+  50      1    101     221   0@-1      400     28
+ 100      1    101     161   0@-1      400     28
+ 200      1    101     131   0@-1      400     28
+ 400      1    101      -1   2@102      400      5
+== other handover speeds (rate 100)
+handover  150: closed   -1 ms fault 4@116
+handover  250: closed   -1 ms fault 4@126
+handover  299: closed  131 ms fault 0@-1
+handover  300: closed  131 ms fault 0@-1
+handover  600: closed  161 ms fault 0@-1
+handover 2000: closed   -1 ms fault 2@242
+== other align currents (rate 100)
+align  100: closed   -1 ms fault 3@101 max_iq 100
+align  250: closed   -1 ms fault 3@101 max_iq 250
+align  299: closed   -1 ms fault 3@101 max_iq 299
+align  300: closed  161 ms fault 0@-1 max_iq 300
+align  350: closed  161 ms fault 0@-1 max_iq 350
+align  400: closed  161 ms fault 0@-1 max_iq 400
+align 1000: closed  161 ms fault 0@-1 max_iq 1000
+== run-down from closed loop at cruise speed
+speed 1501, run = 0: standstill after 41 ms, fault 0
+== rate sweep with align 400 (sync limit)
+rate 150: closed  141 ms fault 0
+rate 200: closed  131 ms fault 0
+rate 250: closed   -1 ms fault 2
+rate 300: closed   -1 ms fault 2
+rate 350: closed   -1 ms fault 2
+rate 400: closed   -1 ms fault 2
+== determinism: starts 100, 400, 100, 400, 100, 100, 100 in one model run
+start 0 rate 100: closed 161 ms fault 0 max_iq 400 stop 28
+start 1 rate 400: closed -1 ms fault 2 max_iq 400 stop 5
+start 2 rate 100: closed 161 ms fault 0 max_iq 400 stop 28
+start 3 rate 400: closed -1 ms fault 2 max_iq 400 stop 5
+start 4 rate 100: closed 161 ms fault 0 max_iq 400 stop 28
+start 5 rate 100: closed 161 ms fault 0 max_iq 400 stop 28
+start 6 rate 100: closed 161 ms fault 0 max_iq 400 stop 28
+good starts identical: yes
+== tune_current.py: ki 20, step 500, 1024 samples at 100 us
+kp    rise_us overshoot% max   final  settle_us(2%)
+ 100    2500         3    519   500   8800
+ 200    2000         0    503   500   8100
+ 400     500         0    502   500  13800
+ 800     200        47    735   499  19800
+== speed loop: ref_offset 0 -> 500 at 1500 counts (0.5 rpm), 600 ms
+overshoot% of the step, sign changes of (speed-2000) after 300 ms, peak iq
+kp\ki                 10                30                60               120               300              1000
+   50   os   0 x0  iq125     os   9 x0  iq136     os  24 x1  iq153     os  42 x2  iq181     os  68 x5  iq239     fault 1 at 0       
+  100   os  -6 x0  iq136     os   0 x1  iq145     os  12 x0  iq151     os  27 x0  iq173     os  51 x1  iq227     fault 1 at 2552    
+  200   os -13 x0  iq184     os   0 x0  iq193     os   1 x0  iq196     os  12 x0  iq202     os  32 x0  iq227     os  73 x4  iq358   
+  300   os -16 x0  iq233     os   0 x0  iq241     os   0 x0  iq246     os   5 x0  iq251     os  21 x0  iq267     os  58 x0  iq361   
+  500   os -17 x0  iq332     os  -2 x0  iq338     os   0 x0  iq342     os   0 x0  iq349     os  10 x0  iq365     os  40 x0  iq429   
+ 1000   os  -7 x0  iq579     os  -2 x0  iq582     os   3 x0  iq586     os   8 x0  iq593     os  14 x0  iq608     os  33 x0  iq673   
+ 1500   os  27 x0  iq824     os  30 x0  iq826     os  33 x0  iq831     os  37 x0  iq837     os  42 x0  iq853     os  55 x50 iq917   
+ 2000   os  58 x0  iq1068    os  60 x0  iq1070    os  63 x0  iq1077    os  66 x0  iq1083    os  70 x0  iq1099    os  82 x50 iq1161  
+ 4000   fault 1 at 2599      fault 1 at 2606      fault 1 at 2615      fault 1 at 2629      fault 1 at 2666      fault 1 at 2710    
+== heartbeat
+never armed, 3 s: state 3 fault 0
+armed, 999 ms: fault 0 run 1
+armed, 1001 ms: fault 5 run 0 state 0
+changed again: fault 0 run 0
+standstill step, heartbeat lost: current_ref 0 current 0 fault 5

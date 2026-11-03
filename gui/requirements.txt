@@ -3,3 +3,4 @@ pyserial
 numpy
 pyelftools
 matplotlib
+pyflakes

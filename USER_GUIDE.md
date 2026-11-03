@@ -1,7 +1,7 @@
 ---
 title: "mini-scope – User Guide"
 subtitle: "Watch and record dsPIC33CK variables live, without halting the CPU"
-date: "October 22, 2026"
+date: "November 3, 2026"
 ---
 
 ## 1. What is mini-scope for?
@@ -31,6 +31,10 @@ There are two modes:
 
 It also works without hardware, see [section 7](#simulation-without-hardware).
 
+**Status:** mini-scope has run in a PC model and in the MPLAB X simulator only. It has
+**never run on real hardware**. Every measured figure in this guide comes from the
+simulator.
+
 ## 3. Preparing the firmware
 
 1. Add `firmware\scope.c` and `firmware\scope.h` to the MPLAB X project.
@@ -49,7 +53,8 @@ It also works without hardware, see [section 7](#simulation-without-hardware).
    `SCOPE_MAX_CH 8` it uses about 1.4 KB. The full table is in `README.md`.
    The user interface adapts automatically.
 5. Check the peripheral clock: `SCOPE_FP_HZ` in `scope.h` must equal FOSC/2.
-   The default is 32 MHz.
+   The default is 32 MHz. With the PLL, FOSC is half the PLL output: the example
+   firmware sets `POST2DIV = 1` to get FOSC 64 MHz.
 6. Build and program.
 
 All settings are described in `README.md`.
@@ -84,13 +89,16 @@ This takes about a minute and needs internet access (behind a proxy, set
 `HTTPS_PROXY` first). Later starts take a few seconds. The browser opens at
 http://localhost:8080.
 
-From top to bottom the page has these areas:
+From top to bottom the page has these areas. Below the ELF row there are two tabs:
+**Scope** holds everything from **Channels** down, **Script** holds the tuning scripts
+(section 6.10).
 
 | Area | Contents |
 |---|---|
 | **Title bar** | **Save**, **Save as ...**, **Load from ...** for the settings |
 | **Connection** | Port, Baud, status line, **Connect** button |
-| **ELF file** | path to the ELF, **Load** button |
+| **ELF file** | path to the ELF, **Browse ...**, **Load** |
+| **Tabs** | **Scope** and **Script** |
 | **Channels** | one row per variable: Variable, Address, type, Factor, delete |
 | **Write variable** | next to the channels: one row per variable: Variable, Address, type, Value, write, delete |
 | **Settings** | Stream or Capture, Sample period, trigger |
@@ -163,7 +171,8 @@ frames**. Increase the period, use fewer channels, or use Capture instead.
 ### 6.4 Record an event (Capture)
 
 1. Select **Capture**.
-2. Enter the **Sample period µs**. A few µs are possible here.
+2. Enter the **Sample period µs**. Values below 10 are refused. Under interrupt load a
+   short period is not held, see below.
 3. Set up the trigger:
    - **Trigger channel:** number of the channel in the list, the first one is
      0.
@@ -180,6 +189,16 @@ frames**. Increase the period, use fewer channels, or use Capture instead.
 The recording length is the capture buffer (4 KB by default) divided by the
 bytes per sample. It is shown to the right of the settings as **capture
 depth**. Fewer channels mean a longer recording.
+
+**How short can the period be?** Measured in the simulator, the capture holds its
+period down to 15 µs at 32 MIPS and 5 µs at 100 MIPS without other interrupts. With a
+60 % control interrupt above mini-scope it holds down to 50 µs (32 MIPS) and 100 µs
+(100 MIPS). Below that the capture still returns a full buffer that looks valid, but the
+samples are not spaced by the period, and **no error is shown**. At 1 to 2 µs the capture
+never ends and the target needs a reset, so periods below 10 µs are refused.
+To see the real spacing, capture a free running timer variable of your own firmware as an
+extra channel: the difference of two neighbouring values is the real spacing in timer
+ticks. These figures are not proven on a real chip.
 
 ### 6.5 Working with the chart
 
@@ -293,6 +312,42 @@ a name gets the variable's current address.
 
 Click **Stop**, then close the console window or press Ctrl+C.
 
+### 6.10 Tuning scripts (Script tab)
+
+A tuning script sets parameters of your firmware, measures what the drive does and
+compares the results in a table. How to write and adapt one is in `SCRIPTING.md`. The
+tab has these buttons:
+
+| Button | What it does |
+|---|---|
+| **Script** list, **Browse ...**, **Open** | select a script from `scripts\` or another folder, open it in your editor |
+| **Check** | compiles the script, tests every name against the ELF and runs it on a fake target. No connection needed, nothing is written. |
+| **Probe** | reads every variable of the script from the target, runs `check_idle()` and tests that each written variable keeps its value. Nothing is started. |
+| **Run** | Check, Probe, then the script |
+| **Abort** | ends the run in the safe end: the safe values are written and read back |
+| **Export tuning.h** | saves a copy of the `tuning.h` of the last run. It is written only for a confirmed result. |
+| **Report** | writes `mini-scope_report.txt` and shows it. Nothing is sent. |
+
+![Script tab after Check](docs/script_tab.png)
+
+Below the buttons are the Problems list with a code per problem (`SCRIPTING.md`
+section 9), the script, the comparison table, the curves of the selected rows, the
+summary picture, the variables of the probe and the log.
+
+![Results of a run: table, overlay of two rows, summary](docs/script_results.png)
+
+While a script runs, the port belongs to it: Connect, Start, Stop, Reset and the write
+rows of the Scope tab are locked. The Scope tab shows the stream of the script. After
+the run its chart is empty again; the curves stay in the comparison table and in the
+run folder.
+
+![Scope tab during a run](docs/scope_run.png)
+
+A run nobody watches is aborted: when no browser page has been connected for 5 s,
+the run ends in the safe end. Every run gets a folder `runs\<script>_<date>_<time>`
+with `results.csv`, one CSV per trace, `run.txt`, `summary.png`, a copy of the script
+and, for a confirmed result, `tuning.h`.
+
 ## 7. Simulation without hardware {#simulation-without-hardware}
 
 Double-click **`start_sim.bat`**. It builds the test project `test.X` for the
@@ -309,8 +364,8 @@ simulator and starts the user interface.
 ![Progress bar while the simulator starts](docs/simulator_start.png)
 
 The simulator runs much slower than real time, and data appears with a delay
-of a few seconds. That is good enough for a functional test. Details are in
-`SIMULATOR.md`.
+of a few seconds. That is good enough for a functional test. Keep the PC awake: if
+it goes to standby, a script run stops. Details are in `SIMULATOR.md`.
 
 ## 8. Troubleshooting
 
@@ -330,6 +385,8 @@ all of them step by step, including how to find out the real clock frequency.
 | Variables no longer match after rebuilding the firmware | **Load** the ELF again, the addresses may have moved |
 | Linker error `multiple definition of _T1Interrupt` (or `_U1RXInterrupt` …) | the application already uses this timer or UART: select another one in `scope.h` |
 | Simulator: progress stalls for more than 90 s | close the console window and run `start_sim.bat` again |
+| Simulator: "the firmware in the simulator sent nothing within 90 s" | the firmware hangs before `scope_init()`, or the ELF is not a `sim` build, see `SIMULATOR.md` section 9 |
+| "Capture period ... is too short" | periods below 10 µs are refused, see section 6.4 |
 
 ## 9. Good to know
 

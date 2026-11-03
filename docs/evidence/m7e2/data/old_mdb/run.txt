@@ -1,0 +1,192 @@
+script tune_speed.py
+time 2026-11-02 22:26:48
+port MdbSerial, time scale 25, output lag 3 ms, power throttling off for 2 processes
+ELF test.X.production.elf
+tune_speed.py:25: warning: motor.state is measured but has no unit(), shown as raw [W205]
+tune_speed.py:28: warning: motor.fault is measured but has no unit(), shown as raw [W205]
+tune_speed.py:29: warning: motor.kp may be written but has no safe_value(): an abort does not reset it [W204]
+tune_speed.py:30: warning: motor.ki may be written but has no safe_value(): an abort does not reset it [W204]
+tune_speed.py:32: warning: startup.ramp_rate may be written but has no safe_value(): an abort does not reset it [W204]
+tune_speed.py:33: warning: startup.align_current may be written but has no safe_value(): an abort does not reset it [W204]
+tune_speed.py:34: warning: startup.handover_speed may be written but has no safe_value(): an abort does not reset it [W204]
+target verified: every end of this run writes the safe values
+variables motor.speed = 0, motor.iq = 0, motor.state = 0, motor.fault = 0, motor.run = 0, motor.kp = 300, motor.ki = 60, motor.ref_offset = 0, startup.ramp_rate = 100, startup.align_current = 400, startup.handover_speed = 600
+write 3017 ms motor.kp = 301 (probe)
+write 3097 ms motor.kp = 300 (probe)
+write 3780 ms motor.ki = 61 (probe)
+write 3835 ms motor.ki = 60 (probe)
+write 4516 ms startup.ramp_rate = 101 (probe)
+write 4597 ms startup.ramp_rate = 100 (probe)
+write 5280 ms startup.align_current = 401 (probe)
+write 5337 ms startup.align_current = 400 (probe)
+write 6019 ms startup.handover_speed = 601 (probe)
+write 6099 ms startup.handover_speed = 600 (probe)
+probe passed: 11 variables read, 0 write test(s) skipped
+parameter RISING = 1
+parameter FALLING = 2
+parameter VAR_RUN = 'motor.run'
+parameter VAR_STATE = 'motor.state'
+parameter VAR_SPEED = 'motor.speed'
+parameter VAR_CURRENT = 'motor.iq'
+parameter VAR_FAULT = 'motor.fault'
+parameter VAR_KP = 'motor.kp'
+parameter VAR_KI = 'motor.ki'
+parameter VAR_REF_OFFSET = 'motor.ref_offset'
+parameter VAR_RAMP_RATE = 'startup.ramp_rate'
+parameter VAR_ALIGN_CURRENT = 'startup.align_current'
+parameter VAR_HANDOVER_SPEED = 'startup.handover_speed'
+parameter ALIGN_CURRENT = 400
+parameter HANDOVER_SPEED = 600
+parameter RAMP_RATE = 100
+parameter BASE_SPEED = 1500
+parameter START_KP = 500
+parameter START_KI = 30
+parameter KP_LIST = [200, 500, 1000, 1500]
+parameter KI_LIST = [60, 150, 300]
+parameter OFFSETS = [300, -300]
+parameter SOFT_OVERSHOOT = 20
+parameter GOOD_OVERSHOOT = 5
+parameter SETTLE_BAND = 2
+parameter CONFIRM_STEPS = 3
+parameter START_TIMEOUT_MS = 400
+parameter STOP_TIMEOUT_MS = 300
+parameter POLL_MS = 2
+parameter HOLD_MS = 100
+parameter BACK_MS = 50
+parameter START_SETTLE_MS = 200
+channels motor.speed, motor.iq, motor.state, motor.fault
+allow {'motor.run': (0, 1), 'motor.kp': (1, 4000), 'motor.ki': (0, 1500), 'motor.ref_offset': (-600, 600), 'startup.ramp_rate': (1, 500), 'startup.align_current': (0, 1000), 'startup.handover_speed': (100, 2000)}, safe {'motor.run': 0, 'motor.ref_offset': 0}, limit {'motor.speed': 2200, 'motor.iq': 1300}
+write 2000 ms startup.align_current = 400
+write 2070 ms startup.handover_speed = 600
+write 2144 ms startup.ramp_rate = 100
+write 2292 ms motor.kp = 500
+write 2364 ms motor.ki = 30
+write 2439 ms motor.ref_offset = 0
+write 2590 ms motor.run = 1
+write 2993 ms motor.kp = 200
+write 3070 ms motor.ki = 60
+write 3222 ms motor.ref_offset = 300
+write 3327 ms motor.ref_offset = 0
+trace 001 "kp 200, ki 60, offset 300": 257 samples, ok
+write 3471 ms motor.ref_offset = -300
+write 3575 ms motor.ref_offset = 0
+trace 002 "kp 200, ki 60, offset -300": 248 samples, ok
+kp 200, ki 60: worst overshoot 2 %, worst settling 58 ms
+write 3724 ms motor.kp = 200
+write 3796 ms motor.ki = 150
+write 3948 ms motor.ref_offset = 300
+write 4051 ms motor.ref_offset = 0
+trace 003 "kp 200, ki 150, offset 300": 255 samples, ok
+write 4197 ms motor.ref_offset = -300
+write 4301 ms motor.ref_offset = 0
+trace 004 "kp 200, ki 150, offset -300": 250 samples, ok
+kp 200, ki 150: worst overshoot 16 %, worst settling 98 ms
+write 4449 ms motor.kp = 200
+write 4520 ms motor.ki = 300
+write 4598 ms motor.ref_offset = 300
+write 4748 ms motor.ref_offset = 0
+trace 005 "kp 200, ki 300, offset 300": 228 samples, ok
+write 4820 ms motor.ref_offset = -300
+write 4972 ms motor.ref_offset = 0
+trace 006 "kp 200, ki 300, offset -300": 224 samples, ok
+kp 200, ki 300: worst overshoot 32 %, worst settling 100 ms
+kp 200: overshoot 32 % above 20 % at ki 300, no larger ki
+write 5041 ms motor.kp = 500
+write 5119 ms motor.ki = 60
+write 5269 ms motor.ref_offset = 300
+write 5373 ms motor.ref_offset = 0
+trace 007 "kp 500, ki 60, offset 300": 254 samples, ok
+write 5523 ms motor.ref_offset = -300
+write 5626 ms motor.ref_offset = 0
+trace 008 "kp 500, ki 60, offset -300": 253 samples, ok
+kp 500, ki 60: worst overshoot 0 %, worst settling 100 ms
+write 5771 ms motor.kp = 500
+write 5840 ms motor.ki = 150
+write 5918 ms motor.ref_offset = 300
+write 6070 ms motor.ref_offset = 0
+trace 009 "kp 500, ki 150, offset 300": 230 samples, ok
+write 6146 ms motor.ref_offset = -300
+write 6297 ms motor.ref_offset = 0
+trace 010 "kp 500, ki 150, offset -300": 227 samples, ok
+kp 500, ki 150: worst overshoot 2 %, worst settling 22 ms
+write 6371 ms motor.kp = 500
+write 6447 ms motor.ki = 300
+write 6593 ms motor.ref_offset = 300
+write 6697 ms motor.ref_offset = 0
+trace 011 "kp 500, ki 300, offset 300": 250 samples, ok
+write 6843 ms motor.ref_offset = -300
+write 6949 ms motor.ref_offset = 0
+trace 012 "kp 500, ki 300, offset -300": 252 samples, ok
+kp 500, ki 300: worst overshoot 10 %, worst settling 68 ms
+write 7092 ms motor.kp = 1000
+write 7166 ms motor.ki = 60
+write 7242 ms motor.ref_offset = 300
+write 7381 ms motor.ref_offset = 0
+trace 013 "kp 1000, ki 60, offset 300": 215 samples, ok
+write 7454 ms motor.ref_offset = -300
+write 7605 ms motor.ref_offset = 0
+trace 014 "kp 1000, ki 60, offset -300": 224 samples, ok
+kp 1000, ki 60: worst overshoot 8 %, worst settling 100 ms
+write 7677 ms motor.kp = 1000
+write 7756 ms motor.ki = 150
+write 7901 ms motor.ref_offset = 300
+write 8005 ms motor.ref_offset = 0
+trace 015 "kp 1000, ki 150, offset 300": 249 samples, ok
+write 8146 ms motor.ref_offset = -300
+write 8252 ms motor.ref_offset = 0
+trace 016 "kp 1000, ki 150, offset -300": 247 samples, ok
+kp 1000, ki 150: worst overshoot 10 %, worst settling 44 ms
+write 8404 ms motor.kp = 1000
+write 8478 ms motor.ki = 300
+write 8630 ms motor.ref_offset = 300
+write 8733 ms motor.ref_offset = 0
+trace 017 "kp 1000, ki 300, offset 300": 255 samples, ok
+write 8879 ms motor.ref_offset = -300
+write 8984 ms motor.ref_offset = 0
+trace 018 "kp 1000, ki 300, offset -300": 251 samples, ok
+kp 1000, ki 300: worst overshoot 14 %, worst settling 16 ms
+write 9125 ms motor.kp = 1500
+write 9205 ms motor.ki = 60
+write 9353 ms motor.ref_offset = 300
+write 9457 ms motor.ref_offset = 0
+trace 019 "kp 1500, ki 60, offset 300": 252 samples, ok
+write 9607 ms motor.ref_offset = -300
+write 9711 ms motor.ref_offset = 0
+trace 020 "kp 1500, ki 60, offset -300": 254 samples, ok
+kp 1500, ki 60: worst overshoot 38 %, worst settling 100 ms
+kp 1500 overshoots 38 % already with the smallest ki: ending the grid
+write 9862 ms motor.kp = 500
+write 9940 ms motor.ki = 150
+write 10091 ms motor.ref_offset = 300
+write 10198 ms motor.ref_offset = 0
+trace 021 "kp 500, ki 150, offset 300": 258 samples, ok
+write 10347 ms motor.ref_offset = -300
+write 10450 ms motor.ref_offset = 0
+trace 022 "kp 500, ki 150, offset -300": 252 samples, ok
+write 10598 ms motor.ref_offset = 300
+write 10704 ms motor.ref_offset = 0
+trace 023 "kp 500, ki 150, offset 300": 254 samples, ok
+write 10852 ms motor.ref_offset = -300
+write 10957 ms motor.ref_offset = 0
+trace 024 "kp 500, ki 150, offset -300": 253 samples, ok
+write 11107 ms motor.ref_offset = 300
+write 11210 ms motor.ref_offset = 0
+trace 025 "kp 500, ki 150, offset 300": 253 samples, ok
+write 11355 ms motor.ref_offset = -300
+write 11460 ms motor.ref_offset = 0
+trace 026 "kp 500, ki 150, offset -300": 250 samples, ok
+write 11605 ms motor.run = 0
+Suggested gains: kp 500, ki 150, written to tuning.h
+script ended, safe end
+write 11650 ms motor.run = 0 (safe)
+write 11650 ms motor.ref_offset = 0 (safe)
+safe values read back: 2 of 2 correct
+heartbeat: largest gap between two writes 6275 ms wall clock, 251 ms target time at scale 25; around a capture 0 ms wall clock, 0 ms target time; the target allows 1000 ms
+result ok
+reason script ended
+abort time 414.8 ms wall clock, 16.6 ms target time
+summary_channel motor.speed
+summary_text Suggested gains: kp 500, ki 150, 3 of 3 steps confirmed
+summary_mark 500
+define SPEED_KP 500
+define SPEED_KI 150

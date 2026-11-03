@@ -16,6 +16,7 @@ import struct
 import sys
 import threading
 import time
+import types
 
 import numpy as np
 import serial
@@ -23,6 +24,11 @@ import serial.tools.list_ports
 from elftools.elf.elffile import ELFFile
 from nicegui import app as nicegui_app
 from nicegui import run, ui
+from nicegui.elements.mixins.disableable_element import DisableableElement
+
+import script_tab
+import tune_api
+from elf_vars import VarError, VarTable
 
 ACK = 0x06
 SYNC_STREAM, SYNC_CAPTURE = 0xA5, 0xC5
@@ -46,6 +52,9 @@ CHART_CLICK_JS = '''
 PNG_ZOOM_JS = '''(() => { const o = getElement(%d).chart.getOption().dataZoom[0];
     return [o.startValue, o.endValue, o.start, o.end]; })()'''   # chart id -> visible x range
 CONFIG = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mini-scope.json'))
+RUNS = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'runs'))     # run folders of scripts
+MISSING = object()          # a key of app that did not exist
+LOCKED = 'A script is running: the port belongs to it'     # what a refused click on the Scope tab says
 
 
 def load_symbols(path):
@@ -60,23 +69,59 @@ def load_symbols(path):
     return dict(sorted(syms.items()))
 
 
+def load_vars(path):
+    """(name -> (address, size), name -> type, VarTable) of the ELF. Names with members and indices (motor.run,
+    phase[1].current) come from the DWARF data; an ELF without it falls back to the symbol table."""
+    table = VarTable.from_elf(path)
+    if not table.has_debug:
+        syms = load_symbols(path)
+        return syms, {}, VarTable.from_symbols(syms)
+    syms, types = {}, {}
+    for name in table.names():
+        try:
+            v = table.lookup(name)
+        except VarError:
+            continue                    # not a plain variable: shown by the ELF check of a script, not listed
+        if v.width in DEFAULT_TYPE:
+            syms[name], types[name] = (v.address, v.width), v.type
+    return syms, types, table
+
+
 class Scope:
     """Talks to firmware/scope.c over a serial port (or SimSerial)."""
 
     def __init__(self, ser):
         self.ser = ser
         self.lock = threading.Lock()
+        self.wlock = threading.Lock()   # one writer at a time: MdbSerial.write can sleep for 1 s per chunk
         self.thread = None
         self.running = False
         self.t = np.zeros(0)
         self.cols = []
-        self.lost = self.captures = 0
+        self.lost = self.captures = self.resyncs = 0
+        self.dump_bytes = 0     # bytes of the capture dump under way (header and data), 0 before it begins
 
     capbuf = max_ch = 0         # from the ping reply: SCOPE_CAPBUF / SCOPE_MAX_CH of the firmware
 
+    @property
+    def time_scale(self):
+        """Wall clock seconds per second of target time (1 on a COM port)."""
+        return getattr(self.ser, 'time_scale', 1)
+
+    @property
+    def output_lag_ms(self):
+        """Target time in ms until a byte written to the target shows up in the sample stream."""
+        return getattr(self.ser, 'output_lag_ms', 0)
+
+    def _send(self, data):
+        # The reader threads never take wlock, so a sleeping writer cannot starve them, and stop()
+        # joins the reader before it writes.
+        with self.wlock:
+            self.ser.write(data)
+
     def ping(self):
         self.ser.reset_input_buffer()
-        self.ser.write(b'P')
+        self._send(b'P')
         r = self.ser.read(7)
         if len(r) != 7 or r[:4] != b'SCP1':
             return False
@@ -88,7 +133,7 @@ class Scope:
         if self.thread:
             self.thread.join()
             self.thread = None
-        self.ser.write(b'S')
+        self._send(b'S')
         quiet = getattr(self.ser, 'quiet', 0.05)    # wait until no late bytes arrive any more
         last, seen = time.time(), self.ser.in_waiting
         while time.time() - last < quiet:
@@ -100,7 +145,7 @@ class Scope:
     def reset(self):
         """Restarts the target firmware ('X'). Returns an error text or None."""
         self.stop()
-        self.ser.write(b'X')
+        self._send(b'X')
         end = time.time() + getattr(self.ser, 'reset_wait', 2.0)
         while time.time() < end:
             if self.ping():
@@ -113,17 +158,34 @@ class Scope:
                     return None
         return 'Target does not answer after the reset'
 
-    def write(self, addr, typ, value):
-        """Writes value into the variable at addr ('W', no reply). Returns an error text or None."""
+    @staticmethod
+    def _w_cmd(addr, typ, value):
+        """The 'W' command as (bytes, None), or (None, error text)."""
         dt = np.dtype(TYPES[typ])
         if not 0 <= addr < 0x8000 or (dt.itemsize > 1 and addr & 1):
-            return 'The address must be below 0x8000, and even for 16- and 32-bit variables'
+            return None, 'The address must be below 0x8000, and even for 16- and 32-bit variables'
         if dt.kind in 'iu':
             lim = np.iinfo(dt)
             if value != int(value) or not lim.min <= value <= lim.max:
-                return f'{typ} takes whole numbers from {lim.min} to {lim.max}'
+                return None, f'{typ} takes whole numbers from {lim.min} to {lim.max}'
         raw = np.array([value], dtype=dt).tobytes()
-        self.ser.write(struct.pack('<cHB', b'W', addr, dt.itemsize) + (raw + bytes(4))[:4])
+        return struct.pack('<cHB', b'W', addr, dt.itemsize) + (raw + bytes(4))[:4], None
+
+    def write(self, addr, typ, value):
+        """Writes value into the variable at addr ('W', no reply). Returns an error text or None."""
+        return self.write_many([(addr, typ, value)])
+
+    def write_many(self, writes):
+        """writes: list of (addr, type, value), sent in one piece and applied in this order.
+        Nothing is sent if one of them is invalid. Returns an error text or None."""
+        msg = b''
+        for w in writes:
+            cmd, err = self._w_cmd(*w)
+            if err:
+                return err
+            msg += cmd
+        if msg:
+            self._send(msg)
         return None
 
     def start(self, chans, mode, period_us, tch=0, ttype=0, level=0, pre_pct=0, auto=True):
@@ -138,15 +200,16 @@ class Scope:
         msg = struct.pack('<cBBHBBiH', b'C', len(chans), mode, period_us, tch, ttype, level, pre)
         for addr, typ in chans:
             msg += struct.pack('<HB', addr, np.dtype(TYPES[typ]).itemsize | (0x80 if typ[0] in 'sf' else 0))
-        self.ser.write(msg)
+        self._send(msg)
         if self.ser.read(1) != bytes([ACK]):
             return 'Target rejected the configuration (too many channels, odd address or no answer)'
         self.dtype = np.dtype([(f'c{i}', TYPES[t]) for i, (_, t) in enumerate(chans)])
         self.auto = auto
         with self.lock:
             self.t, self.cols = np.zeros(0), [np.zeros(0) for _ in chans]
-            self.lost = self.captures = 0
-        self.ser.write(b'R')
+            self.lost = self.captures = self.resyncs = 0
+            self.dump_bytes = 0
+        self._send(b'R')
         self.running = True
         self.thread = threading.Thread(target=self._capture if mode else self._stream, daemon=True)
         self.thread.start()
@@ -159,7 +222,10 @@ class Scope:
     def _read_exact(self, n):
         data = bytearray()
         while len(data) < n and self.running:
-            data += self.ser.read(n - len(data))
+            # what has arrived, not the whole rest: MdbSerial.read(n) holds back everything until n bytes are there
+            got = self.ser.read(max(1, min(n - len(data), self.ser.in_waiting)))
+            data += got
+            self.dump_bytes += len(got)
         return bytes(data) if len(data) == n else None
 
     def _stream(self):
@@ -193,6 +259,8 @@ class Scope:
                     self.cols = [np.concatenate((c, a[f'c{i}']))[-KEEP:] for i, c in enumerate(self.cols)]
             if len(bad):
                 last = None
+                with self.lock:
+                    self.resyncs += 1
 
     def _capture(self):
         while self.running:
@@ -202,6 +270,7 @@ class Scope:
             hdr = self._read_exact(4)
             depth, pre = struct.unpack('<HH', hdr) if hdr else (0, 0)
             if hdr and depth != self.capbuf // self.dtype.itemsize:
+                self.dump_bytes = 0
                 continue                # 0xC5 inside other data, not a header
             data = self._read_exact(depth * self.dtype.itemsize) if hdr else None
             if data is None:
@@ -212,7 +281,7 @@ class Scope:
                 self.cols = [a[f] for f in self.dtype.names]
                 self.captures += 1
             if self.auto and self.running:
-                self.ser.write(b'R')
+                self._send(b'R')
             else:
                 self.running = False
 
@@ -281,6 +350,9 @@ def render_png(d):
 
     d: stamp (time, bottom right), note (user text on top, may be empty), info (lines below), series [(name, x, y)], xlim,
     cursors [(axis, value, label)], columns, rows (measurement table), notes (lines below the table).
+    Optional: a series may be (name, x, y, style) with style a dict of matplotlib line properties (linestyle, color,
+    linewidth, zorder); legend 'outside' puts the legend right of the chart, so that it covers no curve; ylabel (text);
+    mark_row (index into rows, highlighted); empty_text (centered in a chart without series).
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -298,9 +370,11 @@ def render_png(d):
     table_h = min(0.36, 0.03 * (n_rows + 1)) if n_rows else 0
     chart_y = table_y + table_h + 0.075
     chart_top = 0.95 - shift - 0.03 * len(d['info'])
-    ax = fig.add_axes([0.06, chart_y, 0.92, chart_top - chart_y])
-    for name, x, y in d['series']:
-        ax.plot(x, y, linewidth=1.2, label=name)
+    left = 0.075 if d.get('ylabel') else 0.06
+    width = 0.74 if d.get('legend') == 'outside' else 0.98 - left
+    ax = fig.add_axes([left, chart_y, width, chart_top - chart_y])
+    for name, x, y, *style in d['series']:
+        ax.plot(x, y, **{'linewidth': 1.2, **(style[0] if style else {})}, label=name)
     for axis, v, label in d['cursors']:
         (ax.axvline if axis == 'x' else ax.axhline)(v, color='#d08000', linestyle='--', linewidth=1)
         if axis == 'x':
@@ -312,8 +386,14 @@ def render_png(d):
     if d['xlim']:
         ax.set_xlim(*d['xlim'])
     ax.set_xlabel('ms')
+    if d.get('ylabel'):
+        ax.set_ylabel(d['ylabel'])
     ax.grid(True, color='#ddd')
-    if d['series']:
+    if d.get('empty_text') and not d['series']:
+        ax.text(0.5, 0.5, d['empty_text'], transform=ax.transAxes, ha='center', va='center', fontsize=14, color='#888')
+    if d['series'] and d.get('legend') == 'outside':
+        ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0, fontsize=9, framealpha=0.9)
+    elif d['series']:
         ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
     if n_rows:
         tab_ax = fig.add_axes([0.03, table_y, 0.94, table_h])
@@ -329,6 +409,9 @@ def render_png(d):
                 cell.set_text_props(fontweight='bold')
             if c == 0:
                 cell.set_text_props(ha='left')
+            if r > 0 and r - 1 == d.get('mark_row'):
+                cell.set_facecolor('#ffe9a8')
+                cell.set_text_props(fontweight='bold')
     for i, line in enumerate(d['notes']):
         fig.text(0.03, table_y - 0.03 * (i + 1) + 0.005, line, fontsize=10, color='#444')
     buf = io.BytesIO()
@@ -369,7 +452,15 @@ def _open_port(name, baud, progress):
 
 
 def main_page():
-    app = {'scope': None, 'syms': {}, 'mode': 0, 'progress': None, 'tc': [None, None], 'vc': [None, None], 'cfg': CONFIG}
+    app = {'scope': None, 'syms': {}, 'types': {}, 'table': None, 'mode': 0, 'progress': None, 'tc': [None, None], 'vc': [None, None], 'cfg': CONFIG,
+           'busy': False}      # busy: a script run owns the port, nothing of this page may send to it
+    def lock(box):
+        """Disables every input below box while a script runs (a list is built again at each change)."""
+        if app['busy']:
+            for e in box.descendants():
+                if isinstance(e, DisableableElement):
+                    e.set_enabled(False)
+
     chans = [{'name': '', 'addr': '', 'type': 's16', 'factor': 1}]
     new_write = lambda: {'name': '', 'addr': '', 'type': 's16', 'value': None}    # noqa: E731
     writes = [new_write()]
@@ -394,7 +485,7 @@ def main_page():
             conn_btn.text = 'Disconnect' if on else 'Connect'
             port.set_enabled(not on)
             baud.set_enabled(not on)
-            conn_btn.enable()
+            conn_btn.set_enabled(not app['busy'])
 
         async def connect():
             conn_btn.disable()
@@ -425,6 +516,9 @@ def main_page():
             set_connected(False)
 
         async def connect_or_disconnect():
+            if script_tab.RUN.active:
+                ui.notify(LOCKED, type='warning')
+                return
             await (disconnect() if app['scope'] else connect())
 
         conn_btn = ui.button('Connect', on_click=connect_or_disconnect)
@@ -442,7 +536,11 @@ def main_page():
         def load_elf():
             try:
                 path = elf.value.strip().strip('"')
-                app['syms'] = load_symbols(path) if path or not ARGS.sim else sim_symbols()
+                if path or not ARGS.sim:
+                    app['syms'], app['types'], app['table'] = load_vars(path)
+                else:
+                    app['syms'] = sim_symbols()
+                    app['types'], app['table'] = sim_types(), VarTable.from_symbols(app['syms'], sim_types())
                 elf_info.text = f"{len(app['syms'])} variables"
                 for row in chans + writes:  # addresses move with every rebuild: follow the names
                     if row['name'] in app['syms']:
@@ -467,367 +565,473 @@ def main_page():
         ui.button('Browse ...', on_click=browse).props('outline')
         ui.button('Load', on_click=load_elf)
 
-    # ---- channels ----
-    @ui.refreshable
-    def channel_list():
-        for ch in chans:
+    # ---- tabs: Scope (the curves) and Script (tuning scripts, card 4.1) ----
+    with ui.tabs().classes('w-full') as tabs:
+        scope_tab = ui.tab('Scope')
+        script_tab_head = ui.tab('Script')
+    panels = ui.tab_panels(tabs, value=scope_tab).props('keep-alive').classes('w-full')
+    with panels, ui.tab_panel(scope_tab).classes('p-0'):
+        # ---- channels ----
+        @ui.refreshable
+        def channel_list():
+            with ui.element('div').classes('contents') as box:
+                channel_rows()
+            lock(box)
+
+        def channel_rows():
+            for ch in chans:
+                with ui.row().classes('items-center'):
+                    def pick(e, ch=ch):
+                        if e.value in app['syms']:
+                            a, size = app['syms'][e.value]
+                            ch.update(name=e.value, addr=f'0x{a:04X}', type=app['types'].get(e.value) or DEFAULT_TYPE[size])
+                            channel_list.refresh()
+                    if app['syms']:         # dropdown with filter: name (address, size)
+                        ui.select({n: f'{n}  (0x{a:04X}, {s} B)' for n, (a, s) in app['syms'].items()},
+                                  value=ch['name'] if ch['name'] in app['syms'] else None,
+                                  label='Variable', with_input=True, on_change=pick).classes('w-72')
+                    else:
+                        ui.input('Variable', value=ch['name']).bind_value(ch, 'name').classes('w-56')
+                    ui.input('Address', value=ch['addr']).bind_value(ch, 'addr').classes('w-28')
+                    ui.select(list(TYPES), value=ch['type']).bind_value(ch, 'type').classes('w-24')
+                    ui.number('Factor', value=ch['factor']).bind_value(ch, 'factor').classes('w-24')
+                    ui.button(icon='delete', on_click=lambda ch=ch: (chans.remove(ch), channel_list.refresh())) \
+                        .props('flat dense')
+            ui.button('+ Channel', on_click=lambda: (chans.append({'name': '', 'addr': '', 'type': 's16', 'factor': 1}),
+                                                   channel_list.refresh())).props('flat')
+
+        # ---- write variables: same rows as the channels, plus a value ----
+        async def write(w):
+            if script_tab.RUN.active:       # also the Enter key of the value field
+                ui.notify(LOCKED, type='warning')
+                return
+            if not app['scope']:
+                ui.notify('Connect first', type='warning')
+                return
+            try:
+                addr = int(w['addr'], 0)
+            except ValueError:
+                ui.notify('Enter an address such as 0x1234', type='warning')
+                return
+            if w['value'] is None:
+                return
+            err = await run.io_bound(app['scope'].write, addr, w['type'], w['value'])
+            ui.notify(err or f"{w['name'] or w['addr']} = {w['value']:g}", type='negative' if err else 'positive')
+
+        @ui.refreshable
+        def write_list():
+            with ui.element('div').classes('contents') as box:
+                write_rows()
+            lock(box)
+
+        def write_rows():
+            for w in writes:
+                with ui.row().classes('items-center'):
+                    def pick(e, w=w):
+                        if e.value in app['syms']:
+                            a, size = app['syms'][e.value]
+                            w.update(name=e.value, addr=f'0x{a:04X}', type=app['types'].get(e.value) or DEFAULT_TYPE[size])
+                            write_list.refresh()
+                    if app['syms']:
+                        ui.select({n: f'{n}  (0x{a:04X}, {s} B)' for n, (a, s) in app['syms'].items()},
+                                  value=w['name'] if w['name'] in app['syms'] else None,
+                                  label='Variable', with_input=True, on_change=pick).classes('w-72')
+                    else:
+                        ui.input('Variable', value=w['name']).bind_value(w, 'name').classes('w-56')
+                    ui.input('Address', value=w['addr']).bind_value(w, 'addr').classes('w-28')
+                    ui.select(list(TYPES), value=w['type']).bind_value(w, 'type').classes('w-24')
+                    ui.number('Value', value=w['value']).bind_value(w, 'value').classes('w-32') \
+                        .on('keydown.enter', lambda w=w: write(w))
+                    ui.button(icon='send', on_click=lambda w=w: write(w)).props('flat dense').tooltip('Write')
+                    ui.button(icon='delete', on_click=lambda w=w: (writes.remove(w), write_list.refresh())) \
+                        .props('flat dense')
+            ui.button('+ Variable', on_click=lambda: (writes.append(new_write()), write_list.refresh())).props('flat')
+
+        with ui.row().classes('w-full items-stretch'):
+            with ui.card().classes('grow'):
+                ui.label('Channels').classes('font-bold')
+                channel_list()
+            with ui.card().classes('grow'):
+                ui.label('Write variable').classes('font-bold')
+                write_list()
+
+        # ---- settings ----
+        with ui.card().classes('w-full'):
             with ui.row().classes('items-center'):
-                def pick(e, ch=ch):
-                    if e.value in app['syms']:
-                        a, size = app['syms'][e.value]
-                        ch.update(name=e.value, addr=f'0x{a:04X}', type=DEFAULT_TYPE[size])
-                        channel_list.refresh()
-                if app['syms']:         # dropdown with filter: name (address, size)
-                    ui.select({n: f'{n}  (0x{a:04X}, {s} B)' for n, (a, s) in app['syms'].items()},
-                              value=ch['name'] if ch['name'] in app['syms'] else None,
-                              label='Variable', with_input=True, on_change=pick).classes('w-72')
-                else:
-                    ui.input('Variable', value=ch['name']).bind_value(ch, 'name').classes('w-56')
-                ui.input('Address', value=ch['addr']).bind_value(ch, 'addr').classes('w-28')
-                ui.select(list(TYPES), value=ch['type']).bind_value(ch, 'type').classes('w-24')
-                ui.number('Factor', value=ch['factor']).bind_value(ch, 'factor').classes('w-24')
-                ui.button(icon='delete', on_click=lambda ch=ch: (chans.remove(ch), channel_list.refresh())) \
-                    .props('flat dense')
-        ui.button('+ Channel', on_click=lambda: (chans.append({'name': '', 'addr': '', 'type': 's16', 'factor': 1}),
-                                               channel_list.refresh())).props('flat')
+                mode = ui.toggle({0: 'Stream', 1: 'Capture'}, value=0)
+                period = ui.number('Sample period µs', value=1000, min=1, max=65535, format='%d').classes('w-36')
+                window = ui.number('Window (samples)', value=2000, min=10, format='%d').classes('w-36') \
+                    .bind_visibility_from(mode, 'value', value=0)
+                rate = ui.label()
+            with ui.row().classes('items-center').bind_visibility_from(mode, 'value', value=1):
+                tch = ui.number('Trigger channel (0..)', value=0, min=0, format='%d').classes('w-36')
+                ttype = ui.select(TRIGGERS, value=1, label='Edge').classes('w-36')
+                level = ui.number('Threshold (raw)', value=0, format='%d').classes('w-32')
+                pre = ui.number('Pretrigger %', value=20, min=0, max=100, format='%d').classes('w-32')
+                auto = ui.checkbox('Auto re-arm', value=True)
 
-    # ---- write variables: same rows as the channels, plus a value ----
-    async def write(w):
-        if not app['scope']:
-            ui.notify('Connect first', type='warning')
-            return
-        try:
-            addr = int(w['addr'], 0)
-        except ValueError:
-            ui.notify('Enter an address such as 0x1234', type='warning')
-            return
-        if w['value'] is None:
-            return
-        err = await run.io_bound(app['scope'].write, addr, w['type'], w['value'])
-        ui.notify(err or f"{w['name'] or w['addr']} = {w['value']:g}", type='negative' if err else 'positive')
+        def selected():
+            out = []
+            for ch in chans:
+                if ch['addr']:
+                    out.append((int(ch['addr'], 0), ch['type'], ch['name'] or ch['addr'], float(ch['factor'] or 1)))
+            return out
 
-    @ui.refreshable
-    def write_list():
-        for w in writes:
-            with ui.row().classes('items-center'):
-                def pick(e, w=w):
-                    if e.value in app['syms']:
-                        a, size = app['syms'][e.value]
-                        w.update(name=e.value, addr=f'0x{a:04X}', type=DEFAULT_TYPE[size])
-                        write_list.refresh()
-                if app['syms']:
-                    ui.select({n: f'{n}  (0x{a:04X}, {s} B)' for n, (a, s) in app['syms'].items()},
-                              value=w['name'] if w['name'] in app['syms'] else None,
-                              label='Variable', with_input=True, on_change=pick).classes('w-72')
-                else:
-                    ui.input('Variable', value=w['name']).bind_value(w, 'name').classes('w-56')
-                ui.input('Address', value=w['addr']).bind_value(w, 'addr').classes('w-28')
-                ui.select(list(TYPES), value=w['type']).bind_value(w, 'type').classes('w-24')
-                ui.number('Value', value=w['value']).bind_value(w, 'value').classes('w-32') \
-                    .on('keydown.enter', lambda w=w: write(w))
-                ui.button(icon='send', on_click=lambda w=w: write(w)).props('flat dense').tooltip('Write')
-                ui.button(icon='delete', on_click=lambda w=w: (writes.remove(w), write_list.refresh())) \
-                    .props('flat dense')
-        ui.button('+ Variable', on_click=lambda: (writes.append(new_write()), write_list.refresh())).props('flat')
-
-    with ui.row().classes('w-full items-stretch'):
-        with ui.card().classes('grow'):
-            ui.label('Channels').classes('font-bold')
-            channel_list()
-        with ui.card().classes('grow'):
-            ui.label('Write variable').classes('font-bold')
-            write_list()
-
-    # ---- settings ----
-    with ui.card().classes('w-full'):
-        with ui.row().classes('items-center'):
-            mode = ui.toggle({0: 'Stream', 1: 'Capture'}, value=0)
-            period = ui.number('Sample period µs', value=1000, min=1, max=65535, format='%d').classes('w-36')
-            window = ui.number('Window (samples)', value=2000, min=10, format='%d').classes('w-36') \
-                .bind_visibility_from(mode, 'value', value=0)
-            rate = ui.label()
-        with ui.row().classes('items-center').bind_visibility_from(mode, 'value', value=1):
-            tch = ui.number('Trigger channel (0..)', value=0, min=0, format='%d').classes('w-36')
-            ttype = ui.select(TRIGGERS, value=1, label='Edge').classes('w-36')
-            level = ui.number('Threshold (raw)', value=0, format='%d').classes('w-32')
-            pre = ui.number('Pretrigger %', value=20, min=0, max=100, format='%d').classes('w-32')
-            auto = ui.checkbox('Auto re-arm', value=True)
-
-    def selected():
-        out = []
-        for ch in chans:
-            if ch['addr']:
-                out.append((int(ch['addr'], 0), ch['type'], ch['name'] or ch['addr'], float(ch['factor'] or 1)))
-        return out
-
-    async def start():
-        sc, sel = app['scope'], selected()
-        if not sc or not sel:
-            ui.notify('Connect first and enter at least one channel with an address', type='warning')
-            return
-        trig = int(tch.value)
-        if mode.value and (trig >= len(sel) or sel[trig][1] == 'f32'):
-            ui.notify('Trigger channel missing or f32', type='warning')
-            return
-        rec = sum(np.dtype(TYPES[s[1]]).itemsize for s in sel)
-        need, have, min_us = stream_load(rec, period.value, baud.value)
-        if mode.value == 0 and need >= 0.9 * have:
-            ui.notify(f'Sample period too short for streaming: samples will be lost. '
-                      f'Use at least {min_us} µs or Capture.', type='warning', timeout=8000)
-        app['active'] = [ch for ch in chans if ch['addr']]      # rows being measured
-        app['names'] = [s[2] for s in sel]
-        app['mode'], app['period'] = int(mode.value), int(period.value)
-        err = await run.io_bound(sc.start, [s[:2] for s in sel], int(mode.value), int(period.value),
-                                 int(tch.value), int(ttype.value), int(level.value),
-                                 float(pre.value or 0), auto.value)
-        if err:
-            ui.notify(err, type='negative')
-
-    async def stop():
-        if app['scope']:
-            await run.io_bound(app['scope'].stop)
-
-    def factors():
-        """Current factors of the channels being measured (edits apply at once)."""
-        return [float(ch['factor'] or 1) for ch in app['active']]
-
-    def shown():
-        """Raw data currently shown: the stream window or the last capture."""
-        t, cols = app['scope'].snapshot()
-        if app['mode'] == 0 and len(t):
-            keep = t > t[-1] - int(window.value or 2000)
-            t, cols = t[keep], [c[keep] for c in cols]
-        return t, cols
-
-    def autoscale():
-        if not app['scope'] or 'active' not in app:
-            ui.notify('Start a measurement first', type='warning')
-            return
-        t, cols = shown()
-        peaks = [float(np.max(np.abs(c.astype(float)))) if len(c) else 0.0 for c in cols]
-        ref = max(peaks, default=0.0)
-        if ref == 0:
-            ui.notify('No data yet', type='warning')
-            return
-        for ch, pk in zip(app['active'], peaks):
-            if pk > 0:                  # the largest channel keeps 1, the others are scaled up to it
-                ch['factor'] = nice_factor(ref / pk)
-        channel_list.refresh()
-    async def reset():
-        if not app['scope']:
-            ui.notify('Connect first', type='warning')
-            return
-        ui.notify('Resetting the target ...')
-        err = await run.io_bound(app['scope'].reset)
-        ui.notify(err or 'Target restarted', type='negative' if err else 'positive')
-
-    async def png():
-        if not app['scope'] or 'active' not in app:
-            ui.notify('Start a measurement first', type='warning')
-            return
-        t, cols = shown()
-        fs = factors()
-        x = t * app['period'] / 1000
-        step = max(1, math.ceil(len(t) / 20000))
-        series = [(n if f == 1 else f'{n}  (x {f:g})', x[::step], c[::step] * f)
-                  for n, c, f in zip(app['names'], cols, fs)]
-        xlim = None
-        try:                                # the zoomed part of the chart, as on the screen
-            z = await ui.run_javascript(PNG_ZOOM_JS % chart.id)
-            if len(x) and z:
-                lo, hi = float(x.min()), float(x.max())
-                a = z[0] if isinstance(z[0], (int, float)) else lo + (hi - lo) * (z[2] or 0) / 100
-                b = z[1] if isinstance(z[1], (int, float)) else lo + (hi - lo) * (z[3] if z[3] is not None else 100) / 100
-                xlim = (a, b)
-        except Exception:                   # noqa: BLE001 - without the zoom state the whole chart is shown
-            pass
-        sc, m = app['scope'], app['mode']
-        info = [f"{'Stream' if m == 0 else 'Capture'}, sample period {app['period']} µs, {len(t)} samples"
-                + (f', lost frames {sc.lost}' if m == 0 else
-                   f", trigger channel {int(tch.value)} {TRIGGERS[ttype.value]} through {level.value:g} (raw), "
-                   f"pretrigger {pre.value:g} %")]
-        info.append(f"Port {port.value}, {int(baud.value)} baud" + (f",  ELF {os.path.basename(elf.value.strip())}"
-                                                                      if elf.value.strip() else ''))
-        label, rows = app.get('meas', ('', []))
-        keys = [c['name'] for c in meas_cols if tcur.value or c['name'] not in ('c1', 'c2', 'delta')]
-        d = {'stamp': time.strftime('%Y-%m-%d %H:%M:%S'), 'note': (note.value or '').strip(),
-             'info': info, 'series': series,
-             'xlim': xlim,
-             'cursors': cursor_marks(),
-             'columns': [c['label'] for c in meas_cols if c['name'] in keys],
-             'rows': [[r.get(k, '') for k in keys] for r in rows],
-             'notes': [n for n in (label, cur_info.text) if n]}
-        store(await run.io_bound(render_png, d), 'png')
-
-    def store(data, ext):
-        """Saves next to the settings file in use, with a time stamp in the name."""
-        path = os.path.join(os.path.dirname(app['cfg']), f"mini-scope_{time.strftime('%Y%m%d_%H%M%S')}.{ext}")
-        try:
-            with open(path, 'wb') as f:
-                f.write(data)
-            ui.notify(f'Saved {path}', type='positive')
-        except OSError as e:
-            ui.notify(f'Could not save: {e}', type='negative')
-
-    def csv():
-        if not app['scope'] or 'active' not in app:
-            return
-        t, cols = app['scope'].snapshot()
-        out = io.StringIO()
-        out.write('t_ms,' + ','.join(app['names']) + '\n')
-        for row in zip(t * app['period'] / 1000, *(c * f for c, f in zip(cols, factors()))):
-            out.write(','.join(f'{v:g}' for v in row) + '\n')
-        store(out.getvalue().encode(), 'csv')
-
-    with ui.row().classes('items-center'):
-        start_btn = ui.button('Start', on_click=start, color='positive')
-        stop_btn = ui.button('Stop', on_click=stop, color='grey').props('outline')
-        ui.button('Autoscale', on_click=autoscale).props('outline')
-        ui.button('Reset', on_click=reset).props('outline')
-        ui.button('CSV', on_click=csv).props('outline')
-        ui.button('PNG', on_click=lambda: png()).props('outline').tooltip('Chart, settings and measurements as a '
-                                                                          '16:9 picture for a slide')
-        note = ui.input('Note for the PNG').classes('w-96').tooltip('Goes into the header of the PNG')
-
-    def show_running(on):
-        """Only the button that applies is filled: Start while stopped, Stop while running."""
-        if on == app.get('shown_running'):
-            return
-        app['shown_running'] = on
-        (start_btn if on else stop_btn).props('color=grey outline')
-        (stop_btn if on else start_btn).props(f'color={"negative" if on else "positive"}', remove='outline')
-
-    chart = ui.echart({
-        'backgroundColor': 'transparent',
-        'animation': False,
-        'tooltip': {'trigger': 'axis'},
-        'legend': {'top': 0},
-        'grid': {'left': 70, 'right': 20, 'top': 40, 'bottom': 70},
-        'xAxis': {'type': 'value', 'name': 'ms', 'scale': True, 'splitLine': {'lineStyle': {'color': '#333'}}},
-        'yAxis': {'type': 'value', 'scale': True, 'splitLine': {'lineStyle': {'color': '#333'}}},
-        'dataZoom': [{'type': 'inside'}, {'type': 'slider'}],
-        'series': [],
-    }, theme='dark').classes('w-full h-[32rem]')
-
-    # ---- cursors: time T1/T2 and value Y1/Y2, both at the same time if wanted ----
-    def chart_click(e):
-        # one kind on: a click sets it; both on: click = time, Shift+click = value
-        if not (tcur.value or vcur.value):
-            return
-        kind = 'v' if vcur.value and (e.args.get('shift') or not tcur.value) else 't'
-        v = float(e.args['y' if kind == 'v' else 'x'])
-        c = app[kind + 'c']
-        if c[0] is None:
-            c[0] = v
-        elif c[1] is None:
-            c[1] = v
-        else:                                   # the nearer cursor moves
-            c[0 if abs(v - c[0]) <= abs(v - c[1]) else 1] = v
-
-    def clear_cursors():
-        app.update(tc=[None, None], vc=[None, None])
-
-    ui.on('chart_click', chart_click)
-    ui.timer(0.5, lambda: ui.run_javascript(CHART_CLICK_JS % chart.id), once=True)
-
-    with ui.row().classes('items-center'):
-        tcur = ui.checkbox('Time cursors', on_change=lambda: app.update(tc=[None, None]))
-        vcur = ui.checkbox('Value cursors', on_change=lambda: app.update(vc=[None, None]))
-        ui.button('Clear', on_click=clear_cursors).props('flat')
-        cur_info = ui.label()
-
-    meas_cols = [{'name': k, 'label': lab, 'field': k, 'align': 'left' if k == 'ch' else 'right'}
-                 for k, lab in (('ch', 'Channel'), ('min', 'Min'), ('max', 'Max'), ('pkpk', 'Pk-Pk'),
-                                ('mean', 'Mean'), ('rms', 'RMS'), ('freq', 'Freq Hz'), ('period', 'Period ms'),
-                                ('duty', 'Duty %'), ('c1', '@T1'), ('c2', '@T2'), ('delta', 'Δ'))]
-    meas_label = ui.label().classes('text-sm text-gray-400')
-    meas = ui.table(columns=meas_cols, rows=[], row_key='ch').props('dense flat').classes('w-full')
-
-    def fmt(v):
-        return '' if v is None else f'{v:.0f}' if abs(v) >= 1000 else f'{v:.4g}'
-
-    def cursor_text():
-        tc, vc, parts = app['tc'], app['vc'], []
-        if tcur.value and tc[0] is not None:
-            parts.append(f't1 = {fmt(tc[0])} ms' + (
-                f',  t2 = {fmt(tc[1])} ms,  Δt = {fmt(tc[1] - tc[0])} ms,  1/Δt = {fmt(1000 / abs(tc[1] - tc[0]))} Hz'
-                if tc[1] is not None and tc[1] != tc[0] else ''))
-        if vcur.value and vc[0] is not None:
-            parts.append(f'y1 = {fmt(vc[0])}' + (f',  y2 = {fmt(vc[1])},  Δy = {fmt(vc[1] - vc[0])}'
-                                                 if vc[1] is not None else ''))
-        if parts:
-            return '     |     '.join(parts)
-        if tcur.value and vcur.value:
-            return 'click into the chart: time cursor, Shift+click: value cursor'
-        if tcur.value or vcur.value:
-            return 'click into the chart: cursor 1, then cursor 2, then the nearer one moves'
-        return ''
-
-    def update_measurements(x, cols, fs):
-        tc = app['tc']
-        both = tcur.value and None not in tc
-        rng = (x >= min(tc)) & (x <= max(tc)) if both else np.ones(len(x), bool)
-        meas_label.text = ('Measurements between the time cursors' if both else 'Measurements over the chart') \
-            + f', {int(rng.sum())} samples'
-        rows = []
-        for n, col, f in zip(app['names'], cols, fs):
-            y = col.astype(float) * f
-            m = measure(x[rng], y[rng]) or {}
-            row = {'ch': n, **{k: fmt(m.get(k)) for k in ('min', 'max', 'pkpk', 'mean', 'rms', 'freq', 'period',
-                                                           'duty')}}
-            if tcur.value and len(x):
-                at = [None if t is None else float(y[np.argmin(np.abs(x - t))]) for t in tc]
-                row.update(c1=fmt(at[0]), c2=fmt(at[1]), delta=fmt(at[1] - at[0]) if None not in at else '')
-            rows.append(row)
-        meas.rows = rows
-        meas.update()
-        app['meas'] = (meas_label.text, rows)
-        cur_info.text = cursor_text()
-
-    def cursor_marks():
-        """[(axis 'x'/'y', value, label)] of all cursors that are on and set."""
-        return ([('x', v, f'T{i + 1}') for i, v in enumerate(app['tc']) if tcur.value and v is not None]
-                + [('y', v, f'Y{i + 1}') for i, v in enumerate(app['vc']) if vcur.value and v is not None])
-
-    def refresh():
-        progress_box.visible = app['progress'] is not None
-        if app['progress']:
-            progress_bar.value, progress_text.text = app['progress']
-        sel = selected()
-        rec = sum(np.dtype(TYPES[s[1]]).itemsize for s in sel)
-        if rec:
+        async def start():
+            sc, sel = app['scope'], selected()
+            if script_tab.RUN.active:
+                ui.notify(LOCKED, type='warning')
+                return
+            if not sc or not sel:
+                ui.notify('Connect first and enter at least one channel with an address', type='warning')
+                return
+            trig = int(tch.value)
+            if mode.value and (trig >= len(sel) or sel[trig][1] == 'f32'):
+                ui.notify('Trigger channel missing or f32', type='warning')
+                return
+            if mode.value and (period.value or 0) < tune_api.CAPTURE_MIN_US:
+                ui.notify(f'Capture period {int(period.value or 0)} µs is too short: below {tune_api.CAPTURE_MIN_US} µs mini-scope '
+                          f'does not hold its period, and at 1 to 2 µs the target hangs. '
+                          f'Use {tune_api.CAPTURE_MIN_US} µs or more.', type='negative', timeout=8000)
+                return
+            rec = sum(np.dtype(TYPES[s[1]]).itemsize for s in sel)
             need, have, min_us = stream_load(rec, period.value, baud.value)
-            depth = f' | capture depth {app["scope"].capbuf // rec} samples' if app['scope'] else ''
             if mode.value == 0 and need >= 0.9 * have:
-                rate.text = (f'⚠ Too fast for the UART: the stream needs {need / 1000:.1f} kB/s, the UART '
-                             f'carries {have / 1000:.1f} kB/s. Samples will be lost. Use a sample period '
-                             f'of at least {min_us} µs, fewer channels, or Capture.')
-                rate.classes(replace='text-orange-400 font-bold')
-            else:
-                rate.text = (f'Stream needs {need / 1000:.1f} kB/s, UART carries {have / 1000:.1f} kB/s{depth}'
-                             if mode.value == 0 else depth.lstrip(' |'))
-                rate.classes(replace='')
-        sc = app['scope']
-        show_running(bool(sc and sc.running))
-        if not sc or 'active' not in app:
+                ui.notify(f'Sample period too short for streaming: samples will be lost. '
+                          f'Use at least {min_us} µs or Capture.', type='warning', timeout=8000)
+            app['active'] = [ch for ch in chans if ch['addr']]      # rows being measured
+            app['names'] = [s[2] for s in sel]
+            app['mode'], app['period'] = int(mode.value), int(period.value)
+            err = await run.io_bound(sc.start, [s[:2] for s in sel], int(mode.value), int(period.value),
+                                     int(tch.value), int(ttype.value), int(level.value),
+                                     float(pre.value or 0), auto.value)
+            if err:
+                ui.notify(err, type='negative')
+
+        async def stop():
+            if script_tab.RUN.active:
+                ui.notify(LOCKED, type='warning')
+                return
+            if app['scope']:
+                await run.io_bound(app['scope'].stop)
+
+        def factors():
+            """Current factors of the channels being measured (edits apply at once)."""
+            return [float(ch['factor'] or 1) for ch in app['active']]
+
+        def shown():
+            """Raw data currently shown: the stream window or the last capture."""
+            t, cols = app['scope'].snapshot()
+            if app['mode'] == 0 and len(t):
+                keep = t > t[-1] - int(window.value or 2000)
+                t, cols = t[keep], [c[keep] for c in cols]
+            return t, cols
+
+        def autoscale():
+            if not app['scope'] or 'active' not in app:
+                ui.notify('Start a measurement first', type='warning')
+                return
+            t, cols = shown()
+            peaks = [float(np.max(np.abs(c.astype(float)))) if len(c) else 0.0 for c in cols]
+            ref = max(peaks, default=0.0)
+            if ref == 0:
+                ui.notify('No data yet', type='warning')
+                return
+            for ch, pk in zip(app['active'], peaks):
+                if pk > 0:                  # the largest channel keeps 1, the others are scaled up to it
+                    ch['factor'] = nice_factor(ref / pk)
+            channel_list.refresh()
+        async def reset():
+            if script_tab.RUN.active:
+                ui.notify(LOCKED, type='warning')
+                return
+            if not app['scope']:
+                ui.notify('Connect first', type='warning')
+                return
+            ui.notify('Resetting the target ...')
+            err = await run.io_bound(app['scope'].reset)
+            ui.notify(err or 'Target restarted', type='negative' if err else 'positive')
+
+        async def png():
+            if not app['scope'] or 'active' not in app:
+                ui.notify('Start a measurement first', type='warning')
+                return
+            t, cols = shown()
+            fs = factors()
+            x = t * app['period'] / 1000
+            step = max(1, math.ceil(len(t) / 20000))
+            series = [(n if f == 1 else f'{n}  (x {f:g})', x[::step], c[::step] * f)
+                      for n, c, f in zip(app['names'], cols, fs)]
+            xlim = None
+            try:                                # the zoomed part of the chart, as on the screen
+                z = await ui.run_javascript(PNG_ZOOM_JS % chart.id)
+                if len(x) and z:
+                    lo, hi = float(x.min()), float(x.max())
+                    a = z[0] if isinstance(z[0], (int, float)) else lo + (hi - lo) * (z[2] or 0) / 100
+                    b = z[1] if isinstance(z[1], (int, float)) else lo + (hi - lo) * (z[3] if z[3] is not None else 100) / 100
+                    xlim = (a, b)
+            except Exception:                   # noqa: BLE001 - without the zoom state the whole chart is shown
+                pass
+            sc, m = app['scope'], app['mode']
+            info = [f"{'Stream' if m == 0 else 'Capture'}, sample period {app['period']} µs, {len(t)} samples"
+                    + (f', lost frames {sc.lost}' if m == 0 else
+                       f", trigger channel {int(tch.value)} {TRIGGERS[ttype.value]} through {level.value:g} (raw), "
+                       f"pretrigger {pre.value:g} %")]
+            info.append(f"Port {port.value}, {int(baud.value)} baud" + (f",  ELF {os.path.basename(elf.value.strip())}"
+                                                                          if elf.value.strip() else ''))
+            label, rows = app.get('meas', ('', []))
+            keys = [c['name'] for c in meas_cols if tcur.value or c['name'] not in ('c1', 'c2', 'delta')]
+            d = {'stamp': time.strftime('%Y-%m-%d %H:%M:%S'), 'note': (note.value or '').strip(),
+                 'info': info, 'series': series,
+                 'xlim': xlim,
+                 'cursors': cursor_marks(),
+                 'columns': [c['label'] for c in meas_cols if c['name'] in keys],
+                 'rows': [[r.get(k, '') for k in keys] for r in rows],
+                 'notes': [n for n in (label, cur_info.text) if n]}
+            store(await run.io_bound(render_png, d), 'png')
+
+        def store(data, ext):
+            """Saves next to the settings file in use, with a time stamp in the name."""
+            path = os.path.join(os.path.dirname(app['cfg']), f"mini-scope_{time.strftime('%Y%m%d_%H%M%S')}.{ext}")
+            try:
+                with open(path, 'wb') as f:
+                    f.write(data)
+                ui.notify(f'Saved {path}', type='positive')
+            except OSError as e:
+                ui.notify(f'Could not save: {e}', type='negative')
+
+        def csv():
+            if not app['scope'] or 'active' not in app:
+                return
+            t, cols = app['scope'].snapshot()
+            out = io.StringIO()
+            out.write('t_ms,' + ','.join(app['names']) + '\n')
+            for row in zip(t * app['period'] / 1000, *(c * f for c, f in zip(cols, factors()))):
+                out.write(','.join(f'{v:g}' for v in row) + '\n')
+            store(out.getvalue().encode(), 'csv')
+
+        with ui.row().classes('items-center'):
+            start_btn = ui.button('Start', on_click=start, color='positive')
+            stop_btn = ui.button('Stop', on_click=stop, color='grey').props('outline')
+            ui.button('Autoscale', on_click=autoscale).props('outline')
+            reset_btn = ui.button('Reset', on_click=reset).props('outline')
+            ui.button('CSV', on_click=csv).props('outline')
+            ui.button('PNG', on_click=lambda: png()).props('outline').tooltip('Chart, settings and measurements as a '
+                                                                              '16:9 picture for a slide')
+            note = ui.input('Note for the PNG').classes('w-96').tooltip('Goes into the header of the PNG')
+
+        def show_running(on):
+            """Only the button that applies is filled: Start while stopped, Stop while running."""
+            if on == app.get('shown_running'):
+                return
+            app['shown_running'] = on
+            (start_btn if on else stop_btn).props('color=grey outline')
+            (stop_btn if on else start_btn).props(f'color={"negative" if on else "positive"}', remove='outline')
+
+        chart = ui.echart({
+            'backgroundColor': 'transparent',
+            'animation': False,
+            'tooltip': {'trigger': 'axis'},
+            'legend': {'top': 0},
+            'grid': {'left': 70, 'right': 20, 'top': 40, 'bottom': 70},
+            'xAxis': {'type': 'value', 'name': 'ms', 'scale': True, 'splitLine': {'lineStyle': {'color': '#333'}}},
+            'yAxis': {'type': 'value', 'scale': True, 'splitLine': {'lineStyle': {'color': '#333'}}},
+            'dataZoom': [{'type': 'inside'}, {'type': 'slider'}],
+            'series': [],
+        }, theme='dark').classes('w-full h-[32rem]')
+
+        # ---- cursors: time T1/T2 and value Y1/Y2, both at the same time if wanted ----
+        def chart_click(e):
+            # one kind on: a click sets it; both on: click = time, Shift+click = value
+            if not (tcur.value or vcur.value):
+                return
+            kind = 'v' if vcur.value and (e.args.get('shift') or not tcur.value) else 't'
+            v = float(e.args['y' if kind == 'v' else 'x'])
+            c = app[kind + 'c']
+            if c[0] is None:
+                c[0] = v
+            elif c[1] is None:
+                c[1] = v
+            else:                                   # the nearer cursor moves
+                c[0 if abs(v - c[0]) <= abs(v - c[1]) else 1] = v
+
+        def clear_cursors():
+            app.update(tc=[None, None], vc=[None, None])
+
+        ui.on('chart_click', chart_click)
+        ui.timer(0.5, lambda: ui.run_javascript(CHART_CLICK_JS % chart.id), once=True)
+
+        with ui.row().classes('items-center'):
+            tcur = ui.checkbox('Time cursors', on_change=lambda: app.update(tc=[None, None]))
+            vcur = ui.checkbox('Value cursors', on_change=lambda: app.update(vc=[None, None]))
+            ui.button('Clear', on_click=clear_cursors).props('flat')
+            cur_info = ui.label()
+
+        meas_cols = [{'name': k, 'label': lab, 'field': k, 'align': 'left' if k == 'ch' else 'right'}
+                     for k, lab in (('ch', 'Channel'), ('min', 'Min'), ('max', 'Max'), ('pkpk', 'Pk-Pk'),
+                                    ('mean', 'Mean'), ('rms', 'RMS'), ('freq', 'Freq Hz'), ('period', 'Period ms'),
+                                    ('duty', 'Duty %'), ('c1', '@T1'), ('c2', '@T2'), ('delta', 'Δ'))]
+        meas_label = ui.label().classes('text-sm text-gray-400')
+        meas = ui.table(columns=meas_cols, rows=[], row_key='ch').props('dense flat').classes('w-full')
+
+        def fmt(v):
+            return '' if v is None else f'{v:.0f}' if abs(v) >= 1000 else f'{v:.4g}'
+
+        def cursor_text():
+            tc, vc, parts = app['tc'], app['vc'], []
+            if tcur.value and tc[0] is not None:
+                parts.append(f't1 = {fmt(tc[0])} ms' + (
+                    f',  t2 = {fmt(tc[1])} ms,  Δt = {fmt(tc[1] - tc[0])} ms,  1/Δt = {fmt(1000 / abs(tc[1] - tc[0]))} Hz'
+                    if tc[1] is not None and tc[1] != tc[0] else ''))
+            if vcur.value and vc[0] is not None:
+                parts.append(f'y1 = {fmt(vc[0])}' + (f',  y2 = {fmt(vc[1])},  Δy = {fmt(vc[1] - vc[0])}'
+                                                     if vc[1] is not None else ''))
+            if parts:
+                return '     |     '.join(parts)
+            if tcur.value and vcur.value:
+                return 'click into the chart: time cursor, Shift+click: value cursor'
+            if tcur.value or vcur.value:
+                return 'click into the chart: cursor 1, then cursor 2, then the nearer one moves'
+            return ''
+
+        def update_measurements(x, cols, fs):
+            tc = app['tc']
+            both = tcur.value and None not in tc
+            rng = (x >= min(tc)) & (x <= max(tc)) if both else np.ones(len(x), bool)
+            meas_label.text = ('Measurements between the time cursors' if both else 'Measurements over the chart') \
+                + f', {int(rng.sum())} samples'
+            rows = []
+            for n, col, f in zip(app['names'], cols, fs):
+                y = col.astype(float) * f
+                m = measure(x[rng], y[rng]) or {}
+                row = {'ch': n, **{k: fmt(m.get(k)) for k in ('min', 'max', 'pkpk', 'mean', 'rms', 'freq', 'period',
+                                                               'duty')}}
+                if tcur.value and len(x):
+                    at = [None if t is None else float(y[np.argmin(np.abs(x - t))]) for t in tc]
+                    row.update(c1=fmt(at[0]), c2=fmt(at[1]), delta=fmt(at[1] - at[0]) if None not in at else '')
+                rows.append(row)
+            meas.rows = rows
+            meas.update()
+            app['meas'] = (meas_label.text, rows)
+            cur_info.text = cursor_text()
+
+        def cursor_marks():
+            """[(axis 'x'/'y', value, label)] of all cursors that are on and set."""
+            return ([('x', v, f'T{i + 1}') for i, v in enumerate(app['tc']) if tcur.value and v is not None]
+                    + [('y', v, f'Y{i + 1}') for i, v in enumerate(app['vc']) if vcur.value and v is not None])
+
+        def refresh():
+            progress_box.visible = app['progress'] is not None
+            if app['progress']:
+                progress_bar.value, progress_text.text = app['progress']
+            sel = selected()
+            rec = sum(np.dtype(TYPES[s[1]]).itemsize for s in sel)
+            if rec:
+                need, have, min_us = stream_load(rec, period.value, baud.value)
+                depth = f' | capture depth {app["scope"].capbuf // rec} samples' if app['scope'] else ''
+                if mode.value == 0 and need >= 0.9 * have:
+                    rate.text = (f'⚠ Too fast for the UART: the stream needs {need / 1000:.1f} kB/s, the UART '
+                                 f'carries {have / 1000:.1f} kB/s. Samples will be lost. Use a sample period '
+                                 f'of at least {min_us} µs, fewer channels, or Capture.')
+                    rate.classes(replace='text-orange-400 font-bold')
+                else:
+                    rate.text = (f'Stream needs {need / 1000:.1f} kB/s, UART carries {have / 1000:.1f} kB/s{depth}'
+                                 if mode.value == 0 else depth.lstrip(' |'))
+                    rate.classes(replace='')
+            sc = app['scope']
+            show_running(bool(sc and sc.running))
+            if not sc or 'active' not in app:
+                return
+            if script_tab.RUN.active and app.get('run_chan') != script_tab.RUN.chan_seq:
+                return                      # a script runs and its stream has not begun: the data is not described by app
+            t, cols = shown()
+            step = max(1, math.ceil(len(t) / MAX_POINTS))
+            x = t[::step] * app['period'] / 1000
+            fs = factors()
+            chart.options['series'] = [
+                {'name': n, 'type': 'line', 'showSymbol': False,
+                 'data': np.column_stack((x, c[::step] * f)).tolist()}
+                for n, c, f in zip(app['names'], cols, fs)]
+            marks = [{'xAxis' if a == 'x' else 'yAxis': v, 'label': {'formatter': lab}} for a, v, lab in cursor_marks()]
+            if chart.options['series'] and marks:
+                chart.options['series'][0]['markLine'] = {
+                    'symbol': 'none', 'silent': True, 'animation': False, 'data': marks,
+                    'lineStyle': {'color': '#ffcc00', 'type': 'dashed'}, 'label': {'color': '#ffcc00'}}
+            chart.update()
+            update_measurements(t * app['period'] / 1000, cols, fs)
+            status.text = (('running' if sc.running else 'stopped')
+                           + (f' | lost frames: {sc.lost}' if app['mode'] == 0 else f' | captures: {sc.captures}'))
+
+    def script_table():
+        """VarTable for the ELF check of a script: the loaded ELF; SIM brings its own; None if there is none."""
+        path = elf.value.strip().strip('"')
+        if app['table'] is None and (path and os.path.exists(path) or (ARGS.sim and not path)):
+            load_elf()
+        return app['table']
+
+    def set_busy(on):
+        """A script run owns the port: Connect, Start, Stop, Reset, Write and the channel list are locked."""
+        if on == app['busy']:
             return
-        t, cols = shown()
-        step = max(1, math.ceil(len(t) / MAX_POINTS))
-        x = t[::step] * app['period'] / 1000
-        fs = factors()
-        chart.options['series'] = [
-            {'name': n, 'type': 'line', 'showSymbol': False,
-             'data': np.column_stack((x, c[::step] * f)).tolist()}
-            for n, c, f in zip(app['names'], cols, fs)]
-        marks = [{'xAxis' if a == 'x' else 'yAxis': v, 'label': {'formatter': lab}} for a, v, lab in cursor_marks()]
-        if chart.options['series'] and marks:
-            chart.options['series'][0]['markLine'] = {
-                'symbol': 'none', 'silent': True, 'animation': False, 'data': marks,
-                'lineStyle': {'color': '#ffcc00', 'type': 'dashed'}, 'label': {'color': '#ffcc00'}}
+        app['busy'] = on
+        for b in (conn_btn, start_btn, stop_btn, reset_btn):
+            b.set_enabled(not on and (b is not conn_btn or app['progress'] is None))
+        channel_list.refresh()
+        write_list.refresh()
+        if not on:
+            script_over()
+
+    def script_over():
+        """After a run the Scope tab is as before: the settings of the chart are back, the chart is empty. The data
+        of the stream is gone anyway: the read-back of the safe end started other short streams."""
+        pre = app.pop('pre_run', None)
+        app.pop('run_chan', None)
+        if pre is None:                     # the script never got to its stream
+            return
+        for k, v in pre.items():
+            if v is MISSING:
+                app.pop(k, None)
+            else:
+                app[k] = v
+        sc = app['scope']
+        if sc is not None:
+            with sc.lock:
+                sc.t, sc.cols = np.zeros(0), []
+        chart.options['series'] = []
         chart.update()
-        update_measurements(t * app['period'] / 1000, cols, fs)
-        status.text = (('running' if sc.running else 'stopped')
-                       + (f' | lost frames: {sc.lost}' if app['mode'] == 0 else f' | captures: {sc.captures}'))
+
+    def adopt(sc):
+        """A page that comes while a run is on (reload, second window) uses the Scope of the run."""
+        app['scope'] = sc
+        status.text = 'connected (script running)'
+        set_connected(True)
+
+    def script_channels(ev):
+        """The stream of the script goes through the same chart as a measurement of the Scope tab."""
+        names = ev['names']
+        app.setdefault('pre_run', {k: app.get(k, MISSING) for k in ('active', 'names', 'mode', 'period')})
+        app['active'] = [{'name': n, 'factor': f} for n, f in zip(names, ev['factors'])]
+        app['names'] = [n + (f'  [{u}]' if u else '') for n, u in zip(names, ev['units'])]
+        app['mode'], app['period'] = 0, ev['period_us']
+        app['run_chan'] = script_tab.RUN.chan_seq
+
+    def lost():
+        """The run ended because the port failed: back to not connected, nothing is sent to the port."""
+        sc, app['scope'] = app['scope'], None
+        if sc is not None:
+            try:
+                close_port(sc.ser)
+            except Exception:       # noqa: BLE001 - the port is gone
+                pass
+        status.text = 'not connected (the port was lost during the script)'
+        set_connected(False)
+
+    host = types.SimpleNamespace(scope=lambda: app['scope'], adopt=adopt, busy=set_busy, channels=script_channels, lost=lost,
+                                 elf_name=lambda: os.path.basename(elf.value.strip().strip('"')) or 'model',
+                                 runs_dir=RUNS, render_png=render_png)
+    with panels, ui.tab_panel(script_tab_head).classes('p-0'):
+        script_ui = script_tab.build(script_table, lambda: int(baud.value or 115200), pick_file, host)
+    panels.on_value_change(lambda e: script_ui.opened() if e.value == 'Script' else None)
 
     ui.timer(0.25, refresh)
 
@@ -836,7 +1040,8 @@ def main_page():
         return {'port': port.value, 'baud': baud.value, 'elf': elf.value, 'channels': chans, 'writes': writes,
                 'mode': mode.value, 'period': period.value, 'window': window.value, 'note': note.value,
                 'trigger': {'channel': tch.value, 'edge': ttype.value, 'threshold': level.value,
-                            'pretrigger': pre.value, 'auto_rearm': auto.value}}
+                            'pretrigger': pre.value, 'auto_rearm': auto.value},
+                'script': script_ui.settings()}
 
     def apply(cfg):
         if not app['scope']:                    # port and baud are locked while connected
@@ -857,6 +1062,7 @@ def main_page():
         level.value = trig.get('threshold', level.value)
         pre.value = trig.get('pretrigger', pre.value)
         auto.value = trig.get('auto_rearm', auto.value)
+        script_ui.apply(cfg.get('script'))
         path = elf.value.strip().strip('"')
         if ARGS.sim or os.path.exists(path):
             load_elf()                          # variable lists for the channels
@@ -906,10 +1112,30 @@ def main_page():
         load(CONFIG, quiet=True)
 
 
+def console_close_hook():
+    """Ctrl+C, Ctrl+Break, a closed console window, logoff and shutdown: abort an active run first. Python's own
+    handling goes on afterwards (the handler returns False), Windows ends the process a few seconds after a close."""
+    import ctypes
+    from ctypes import wintypes
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+    def handler(event):
+        if event in (0, 1, 2, 5, 6):
+            script_tab.shutdown(4.0)
+        return False
+    console_close_hook.handler = handler        # kept alive: the OS calls it from a thread of its own
+    ctypes.windll.kernel32.SetConsoleCtrlHandler(handler, True)
+
+
 def sim_symbols():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'tests'))
     from sim_serial import SYMBOLS
     return SYMBOLS
+
+
+def sim_types():
+    from sim_serial import SYMBOL_TYPES
+    return SYMBOL_TYPES
 
 
 if __name__ in {'__main__', '__mp_main__'}:
@@ -918,7 +1144,18 @@ if __name__ in {'__main__', '__mp_main__'}:
     p.add_argument('--mdb', metavar='ELF', help='no hardware: firmware in the MPLAB X simulator')
     p.add_argument('--port', type=int, default=8080, help='HTTP-Port')
     p.add_argument('--no-browser', action='store_true', help='do not open the browser')
+    p.add_argument('--config', metavar='FILE', help='settings file instead of mini-scope.json (tests)')
+    p.add_argument('--runs', metavar='DIR', help='folder for the run folders of scripts (default: runs next to the project)')
     ARGS = p.parse_args()
+    if ARGS.config:
+        CONFIG = os.path.abspath(ARGS.config)
+    if ARGS.runs:
+        RUNS = os.path.abspath(ARGS.runs)
+    nicegui_app.on_connect(script_tab.client_connected)
+    nicegui_app.on_disconnect(script_tab.client_disconnected)
+    nicegui_app.on_shutdown(script_tab.on_app_shutdown)       # an active run goes to its safe end first, then the ports close
     nicegui_app.on_shutdown(close_ports)
+    if sys.platform == 'win32':
+        console_close_hook()
     ui.run(main_page, title='mini-scope', port=ARGS.port, reload=False, show=not ARGS.no_browser,
            dark=True)

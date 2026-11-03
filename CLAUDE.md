@@ -4,8 +4,8 @@ The typical situation: a customer cloned this project, built and programmed
 `test.X` in MPLAB X, and the GUI does not work on their board. Your job is to
 get mini-scope running on that board.
 
-**Status:** mini-scope has run in the MPLAB X simulator and in a PC model,
-**never on real hardware yet**. A fault can therefore be in mini-scope itself.
+**Status:** mini-scope and the tuning scripts have run in the MPLAB X simulator
+and in a PC model, **never on real hardware yet**. A fault can therefore be in mini-scope itself.
 If the evidence points there, say so plainly and help the customer report it
 (TROUBLESHOOTING.md section 9) instead of patching around it silently.
 
@@ -16,7 +16,9 @@ If the evidence points there, say so plainly and help the customer report it
   or other generated files. After a change, tell the customer exactly what to
   do: "Make and Program Device" with configuration `default` (production, not
   Debug), then disconnect the PICkit, then which check to run. For build
-  errors, ask for the build output from the MPLAB X Output window.
+  errors, ask the customer to read the MPLAB X Output window to you. This help
+  is given at the customer's own desk, inside their own session. The output
+  stays there: it is never sent on, and never goes into a report or a hand-over.
 - **You cannot see the board.** Ask for concrete observations: which pin,
   which instrument, what value you expect. Do not assume wiring or clock.
 - **One change at a time**, then check again. Keep track of what was tried.
@@ -61,6 +63,10 @@ If the evidence points there, say so plainly and help the customer report it
 | write | command `W` doubles `ramp_step` during a stream, the ramp gets twice as steep | firmware older than the GUI |
 | reset | command `X` restarts the firmware, also during a stream | firmware without `X`, slow start-up |
 
+Without a board, `hw_check.py --port SIM` runs the same checks against the PC model.
+In the simulator (`--port MDB`), a firmware that sends nothing ends with the FAIL line
+"the firmware in the simulator sent nothing within 90 s" after about 110 s.
+
 The demo variables (`counter`, `ramp`, `ramp_step`) come from the ELF of `test.X`. With
 the customer's own firmware, pass `--elf`; without these variables only the
 checks that need no variables run.
@@ -69,6 +75,8 @@ checks that need no variables run.
 
 `test.X` is set up for a **dsPIC33CK64MC103**, FRC + PLL to FOSC 64 MHz
 (FP 32 MHz), UART1 on RB5/RB6 (= ICSP channel 3, `ICS = PGD3`), PICkit 5.
+FOSC is FPLLO / 2, so FOSC 64 MHz needs `POST2DIV = 1`. A firmware that sets
+`POST2DIV = 2` for 64 MHz runs at FP 16 MHz; hw_check then reports the factor 0.5.
 
 - **Other pins:** set `SCOPE_TX_RP` / `SCOPE_RX_RP` (RB*n* = RP(32+*n*),
   RC*n* = RP(48+*n*)). If the pins are not on the ICSP channel, the customer
@@ -90,11 +98,17 @@ checks that need no variables run.
 
 ## Changing the code
 
-- Layout: `firmware/` (scope.c/h, example_main.c), `gui/scope_gui.py`
-  (NiceGUI, the `Scope` class is the protocol client), `tests/` (PC model:
-  scope.c with mock registers as `sim.dll`), `tools/` (doctor, hw_check,
-  mdb_serial for the simulator), `test.X` (configurations `default` and
-  `sim`).
+- Layout: `firmware/` (scope.c/h, example_main.c, tune_block.h, tune_model.h),
+  `gui/` (`scope_gui.py`: NiceGUI, the `Scope` class is the protocol client;
+  `script_tab.py`, `tune_api.py`, `tune_check.py`, `elf_vars.py` for the tuning
+  scripts), `scripts/` (tuning scripts), `tests/` (PC model: scope.c with mock
+  registers as `sim.dll`, and the tests listed in README.md), `tools/` (doctor,
+  hw_check, run_script, report, mdb_serial for the simulator), `test.X`
+  (configurations `default` and `sim`).
+- Tuning scripts: when a customer adapts one, follow SCRIPTING.md section 2. Check
+  (`tools/run_script.py --check`) and Probe need no motor; the first Run is with the
+  power stage off. A change to `gui/tune_api.py` must keep the safe end and the
+  heartbeat; run `tests/test_script.py` and `tests/test_faults.py`.
 - After every change to `scope.c` or the protocol, run the PC model; it
   needs gcc (MinGW) and takes seconds:
 
@@ -119,11 +133,22 @@ pins or the clock. Its peculiarities, so they are not mistaken for bugs:
   path through the sampling interrupt must call `tx_kick()`. A missing kick
   stalls the stream for good once the TX ring is full.
 - `GIE` is 0 after reset; the first mailbox write after `Run` gets lost; the
-  simulator runs about 25 times slower than real time and its UART output
-  file lags by a few seconds.
+  simulator runs 14 to 17 times slower than real time (the port plans with 25)
+  and its UART output file lags by a few seconds.
+- Windows power throttling slows the simulator up to 4 times; `full_speed()` in
+  `tools/mdb_serial.py` switches it off. Modern Standby stops a run; keep the PC
+  awake.
+- Three rare events on MDB have no known cause (a stream stop in the probe, an
+  unanswered first ping, a page that lost its connection). Each ended safely. Do
+  not chase them as a customer fault.
 
 ## Handing over
 
-When it works, or when you are stuck, collect for the customer:
-`doctor_report.txt`, `hw_report.txt`, the list of changes made, and the items
-of TROUBLESHOOTING.md section 9. That is what is needed to report a problem.
+Customer data stays at the customer: variable names, ELF files, scripts, traces,
+tables, tuning values, file paths and build output are not collected, not copied
+into a message and not sent. When it works, or when you are stuck, the customer
+runs `.venv\Scripts\python tools\report.py` (after `doctor.py` and
+`hw_check.py`). That writes `mini-scope_report.txt`: versions, check results,
+measured numbers and rule codes, from an allow list. The customer reads the file
+and decides whether to send it; the tool sends nothing. Do not ask for anything
+else. TROUBLESHOOTING.md section 9 is the customer's side of this.

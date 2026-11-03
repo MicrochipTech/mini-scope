@@ -1,0 +1,56 @@
+== tune_current.py, MDB run 1: results.csv
+kp,rise_us,overshoot_percent,status
+100,-1,103,ok
+200,-1,100,ok
+400,0,99,ok
+800,0,147,ok
+== tune_current.py, MDB run 2: results.csv
+kp,rise_us,overshoot_percent,status
+100,-1,103,ok
+200,-1,100,ok
+400,0,100,ok
+800,0,146,ok
+== tune_current.py, MDB run 3: results.csv
+kp,rise_us,overshoot_percent,status
+100,-1,103,ok
+200,-1,100,ok
+400,-1,99,ok
+800,0,147,ok
+
+== tune_speed.py, MDB: results.csv
+kp,ki,offset,overshoot_pct,settle_ms,status
+200,60,300,0,100,ok
+200,60,-300,2,98,ok
+200,150,300,16,98,ok
+200,150,-300,17,94,ok
+200,300,300,33,100,ok
+200,300,-300,26,100,ok
+500,60,300,0,100,ok
+500,60,-300,0,100,ok
+500,150,300,1,20,ok
+500,150,-300,2,18,ok
+500,300,300,10,68,ok
+500,300,-300,11,68,ok
+1000,60,300,9,100,ok
+1000,60,-300,5,100,ok
+1000,150,300,10,36,ok
+1000,150,-300,8,66,ok
+1000,300,300,14,14,ok
+1000,300,-300,15,14,ok
+1500,60,300,39,100,ok
+1500,60,-300,38,100,ok
+
+== tune_startup.py, MDB: results.csv
+ramp_rate,good_starts,time_ms,status
+50,1,220,ok
+100,1,160,ok
+200,1,130,ok
+400,0,-1,ok
+
+== step length in the capture (ref falls, ms after the trigger; asked for 100 ms)
+run 1 trace 001: 36.2 ms
+run 1 trace 003: 48.6 ms
+run 2 trace 001: 39.8 ms
+run 2 trace 003: 52.6 ms
+run 3 trace 001: 38.6 ms
+run 3 trace 003: 32.1 ms

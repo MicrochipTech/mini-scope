@@ -20,7 +20,13 @@ test.X/debug/
 .venv/
 doctor_report.txt
 hw_report.txt
+hw_report.json
+mini-scope_report.txt
 /*.pdf
 /mini-scope.json
 /mini-scope_*.csv
 /mini-scope_*.png
+
+# Run folders of tuning scripts
+runs/
+run_report.txt

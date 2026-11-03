@@ -1,0 +1,9 @@
+How vars.elf and vars_nodebug.elf were built (xc-dsc v3.30, dsPIC33CK64MC103). The sources are compiled from a
+drive root so that no folder name of the build machine ends up in the DWARF data and the symbol table
+(subst Q: <this folder>, then in Q:\):
+
+  xc-dsc-gcc.exe -mcpu=33CK64MC103 -mdfp=<dsPIC33CK-MC_DFP 1.10.386>/xc16 -g -O0 -omf=elf vars.c vars2.c ^
+      -o vars.elf -Wl,--script=p33CK64MC103.gld,--no-gc-sections
+  xc-dsc-objcopy.exe -mdfp=<same> --strip-debug vars.elf vars_nodebug.elf
+
+vars_nodebug.elf is the same program without debug sections, for the "build with -g" message.

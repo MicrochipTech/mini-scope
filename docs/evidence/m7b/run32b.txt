@@ -1,0 +1,29 @@
+MDB started in 33 s, oscillator.frequency 64 MHz, power throttling off for 2 processes
+FP 32 MHz, control ISR burn 909 cycles per pass of 1600
+ping ok, capture buffer 4096 bytes, max 16 channels
+a kick only, mini-scope idle:  idle/cycle 0.028456, idle/s 910577, 2.052 s target, Stopwatch 65636048 cycles
+  D load off, stream 1 ms, 4 channels: frames 4065 (sample index span 4065), lost 0, resyncs 0, scope_overflows 0
+    frames expected from the time stamps 4065.0; spacing of neighbours min 7999 / mean 8000.00 / max 8001 ticks of FP/4 (nominal 8000); window 4.04 s target time
+D load off, stream 1 ms:      idle/cycle 0.027253, idle/s 872105, 4.040 s target, Stopwatch 129296818 cycles
+  control load off
+  capture 40 us with trigger: 512 samples, spacing min 320 / mean 320.00 / max 320 ticks of FP/4 (nominal 320.0), pretrigger 102 samples, time stamp 29914 -> 30234 through 30000: OK
+  control load off
+  capture 30 us with trigger: 512 samples, spacing min 239 / mean 240.00 / max 241 ticks of FP/4 (nominal 240.0), pretrigger 102 samples, time stamp 29866 -> 30105 through 30000: OK
+  control load off
+  capture 25 us with trigger: 512 samples, spacing min 200 / mean 200.00 / max 200 ticks of FP/4 (nominal 200.0), pretrigger 102 samples, time stamp 29986 -> 30186 through 30000: OK
+  control load off
+  capture 20 us with trigger: 512 samples, spacing min 159 / mean 160.00 / max 161 ticks of FP/4 (nominal 160.0), pretrigger 102 samples, time stamp 29868 -> 30028 through 30000: OK
+  control load off
+  capture 15 us with trigger: 512 samples, spacing min 119 / mean 120.00 / max 121 ticks of FP/4 (nominal 120.0), pretrigger 102 samples, time stamp 29944 -> 30064 through 30000: OK
+  control load off
+  capture 10 us with trigger: 512 samples, spacing min 95 / mean 100.52 / max 124 ticks of FP/4 (nominal 80.0), pretrigger 102 samples, time stamp 29972 -> 30090 through 30000: OK
+  control load on
+  capture 40 us with trigger: 512 samples, spacing min 92 / mean 320.15 / max 400 ticks of FP/4 (nominal 320.0), pretrigger 102 samples, time stamp 29760 -> 30147 through 30000: OK
+  control load on
+  capture 30 us with trigger: 512 samples, spacing min 95 / mean 252.61 / max 377 ticks of FP/4 (nominal 240.0), pretrigger 102 samples, time stamp 29926 -> 30291 through 30000: OK
+  control load on
+  capture 25 us with trigger: 512 samples, spacing min 92 / mean 245.65 / max 363 ticks of FP/4 (nominal 200.0), pretrigger 102 samples, time stamp 29916 -> 30034 through 30000: OK
+  control load on
+  capture 20 us with trigger: 512 samples, spacing min 105 / mean 269.93 / max 373 ticks of FP/4 (nominal 160.0), pretrigger 102 samples, time stamp 29874 -> 30232 through 30000: OK
+  control load on
+  capture 10 us with trigger: 512 samples, spacing min 95 / mean 251.27 / max 361 ticks of FP/4 (nominal 80.0), pretrigger 102 samples, time stamp 29974 -> 30332 through 30000: OK

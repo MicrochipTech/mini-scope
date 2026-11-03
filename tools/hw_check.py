@@ -9,10 +9,13 @@ them only the checks that need no variables run. --port SIM runs against the
 PC model (tests/sim.dll) to try out this script.
 
 The report goes to the console and to hw_report.txt; each FAIL/WARN names the
-section of TROUBLESHOOTING.md to read next.
+section of TROUBLESHOOTING.md to read next. The file holds no path, user name or
+variable name of yours (the console may show where the ELF is). hw_report.json
+holds the numbers for tools/report.py.
 """
 import argparse
 import datetime
+import json
 import os
 import platform
 import sys
@@ -27,17 +30,21 @@ import scope_gui as g      # noqa: E402
 
 ELF = os.path.join(ROOT, r'test.X\dist\default\production\test.X.production.elf')
 BAUDS = (115200, 57600, 230400, 14400, 28800, 38400, 19200, 76800, 9600)
-lines, results = [], []
+lines, results, checks = [], [], []
 
 
-def out(text=''):
+def out(text='', rep=True):
+    """Console and report file. rep: the text for the file if it differs (a string), or False to keep it off."""
     print(text, flush=True)
-    lines.append(text)
+    if rep is not False:
+        lines.append(text if rep is True else rep)
 
 
-def result(status, name, detail, hint=''):
+def result(status, name, detail, hint='', rep=True, **data):
+    """rep: file text of the detail (error texts of the OS can hold names). data: numbers for report.py."""
     results.append(status)
-    out(f'{status:4}  {name}: {detail}')
+    checks.append(dict(name=name, status=status, **data))
+    out(f'{status:4}  {name}: {detail}', rep if rep is True else f'{status:4}  {name}: {rep}')
     if hint and status != 'OK':
         out(f'      -> {hint}')
 
@@ -47,18 +54,19 @@ def loopback(port, baud):
     try:
         s = serial.Serial(port, baud, timeout=0.5)
     except serial.SerialException as e:
-        result('FAIL', 'port', str(e), 'wrong COM port, or another program has it open')
+        result('FAIL', 'port', str(e), 'wrong COM port, or another program has it open', rep='serial error')
         return
     with s:
         s.reset_input_buffer()
         s.write(data)
         back = s.read(len(data))
     if back == data:
-        result('OK', 'adapter loopback', f'{len(data)} bytes at {baud} baud came back unchanged')
+        result('OK', 'adapter loopback', f'{len(data)} bytes at {baud} baud came back unchanged', wrong=0)
     else:
         result('FAIL', 'adapter loopback', f'{len(back)} of {len(data)} bytes back, '
                f'{sum(a != b for a, b in zip(back, data))} wrong',
-               'TX and RX of the adapter bridged? Right COM port? Port busy (GUI, terminal)?')
+               'TX and RX of the adapter bridged? Right COM port? Port busy (GUI, terminal)?',
+               wrong=sum(a != b for a, b in zip(back, data)))
 
 
 def connect(port, baud):
@@ -69,7 +77,10 @@ def connect(port, baud):
             ser = g.open_port(port, b)
         except serial.SerialException as e:
             result('FAIL', 'port', str(e), 'wrong COM port, or the GUI / a terminal still has it open: '
-                   'TROUBLESHOOTING.md 3, 4.1')
+                   'TROUBLESHOOTING.md 3, 4.1', rep='serial error')
+            return None, None
+        except TimeoutError as e:       # MdbNoAnswer: the simulator start-up failed
+            result('FAIL', 'ping', str(e), 'TROUBLESHOOTING.md 4.2, SIMULATOR.md 9', rep='simulator did not answer')
             return None, None
         sc = g.Scope(ser)
         for _ in range(3):
@@ -113,14 +124,15 @@ def check_clock(sc, chans, counter_col, secs):
     if len(t) < 100:
         result('FAIL', 'stream', f'only {len(t)} samples in {secs} s', 'TROUBLESHOOTING.md 4.5')
         return
-    result('OK', 'stream', f'{len(t)} samples in {secs} s, {sc.lost} lost')
+    result('OK', 'stream', f'{len(t)} samples in {secs} s, {sc.lost} lost', samples=len(t), lost=sc.lost)
     m = np.array([x for x in marks if x[0] > marks[0][0] + 1.0])     # skip the start-up second
     rate = np.polyfit(m[:, 0], m[:, 1], 1)[0] if len(m) > 4 else 0
     dev = (rate / 1000 - 1) * 100
     detail = f'{rate:.1f} samples/s at 1000 us, sample clock {dev:+.2f} % against the PC'
     hint = ('FP differs from SCOPE_FP_HZ (FRC tolerance, PLL setup); the baud rate is off by the same amount: '
             'TROUBLESHOOTING.md 4.3')
-    result('OK' if abs(dev) < 1.5 else 'WARN' if abs(dev) < 3 else 'FAIL', 'clock', detail, hint)
+    result('OK' if abs(dev) < 1.5 else 'WARN' if abs(dev) < 3 else 'FAIL', 'clock', detail, hint,
+           clock_dev_pct=round(dev, 2))
     if counter_col is None:
         return
     c = cols[counter_col].astype(np.int64)
@@ -129,7 +141,8 @@ def check_clock(sc, chans, counter_col, secs):
     bad = int(np.sum((d <= 0) | (np.abs(d - med) > 0.5 * med)))
     result('OK' if bad == 0 else 'WARN', 'consistency',
            f'counter +{med:.0f} per sample, {bad} outliers in {len(d)} steps',
-           'torn 32-bit reads or a stalled main loop: TROUBLESHOOTING.md 5 ("Single values are wrong")')
+           'torn 32-bit reads or a stalled main loop: TROUBLESHOOTING.md 5 ("Single values are wrong")',
+           outliers=bad, steps=len(d))
 
 
 def check_rates(sc, chans, baud):
@@ -141,9 +154,10 @@ def check_rates(sc, chans, baud):
             result('FAIL', f'stream {per} us', marks)
             continue
         status = 'OK' if sc.lost == 0 and len(t) > 0 else 'FAIL'
-        result(status, f'stream {per} us', f'{len(t)} samples, {sc.lost} lost ({rec + 2} bytes/frame)',
+        result(status, f'stream {per} us', f'{len(t)} samples, {sc.lost} lost, {sc.resyncs} resyncs ({rec + 2} bytes/frame)',
                'the UART does not carry what it should: TX interrupt, baud rate, '
-               'or other interrupts blocking mini-scope (TROUBLESHOOTING.md 4.5)')
+               'or other interrupts blocking mini-scope (TROUBLESHOOTING.md 4.5)',
+               period_us=per, samples=len(t), lost=sc.lost, resyncs=sc.resyncs)
 
 
 def check_capture(sc, chans, ramp_col):
@@ -164,13 +178,13 @@ def check_capture(sc, chans, ramp_col):
         depth = sc.capbuf // sum(np.dtype(g.TYPES[ty]).itemsize for _, ty in chans)
         if kw['ttype'] == 0:
             ok = len(t) == depth and t[0] == 0
-            result('OK' if ok else 'FAIL', name, f'{len(t)} of {depth} samples at 10 us')
+            result('OK' if ok else 'FAIL', name, f'{len(t)} of {depth} samples at 10 us', samples=len(t), depth=depth)
         else:
             r = cols[ramp_col].astype(np.int64)
             i0 = int(np.flatnonzero(t == 0)[0])
             ok = r[i0 - 1] < 30000 <= r[i0]
             result('OK' if ok else 'FAIL', name, f'ramp rising through 30000: {r[i0 - 1]} -> {r[i0]}, '
-                   f'pretrigger {i0} samples', 'TROUBLESHOOTING.md 6')
+                   f'pretrigger {i0} samples', 'TROUBLESHOOTING.md 6', pretrigger=i0)
 
 
 def check_write(sc, ramp, step_addr):
@@ -193,7 +207,8 @@ def check_write(sc, ramp, step_addr):
     sc.write(step_addr, 'u16', 1)
     ok = s1 > 0 and abs(s2 / s1 - 2) < 0.2
     result('OK' if ok else 'FAIL', 'write', f'ramp_step 1 -> 2 while streaming: ramp slope {s1:.0f} -> {s2:.0f} per sample',
-           'the W command does not arrive or does not write: firmware older than the GUI?')
+           'the W command does not arrive or does not write: firmware older than the GUI?',
+           slope_ratio=round(s2 / s1, 2) if s1 else 0)
 
 
 def first_counter(sc, ch):
@@ -212,7 +227,7 @@ def check_reset(sc, counter, restarts=True):
         detail += f', counter {before} -> {after}'
     restarted = err is None and (before is None or after is None or after < before)
     result('OK' if restarted else 'FAIL', 'reset', err or detail,
-           'firmware without the X command, or start-up takes longer than 2 s')
+           'firmware without the X command, or start-up takes longer than 2 s', answer_s=round(time.time() - t0, 1))
     if not counter or err:
         return
     sc.start([counter], 0, 1000)                # 'X' in the middle of a stream, without 'S' first
@@ -225,7 +240,8 @@ def check_reset(sc, counter, restarts=True):
     while not ok and time.time() - t0 < 3:
         ok = sc.ping()
     result('OK' if ok else 'FAIL', 'reset while streaming',
-           f'answers again after {time.time() - t0:.1f} s' if ok else 'no answer within 3 s')
+           f'answers again after {time.time() - t0:.1f} s' if ok else 'no answer within 3 s',
+           answer_s=round(time.time() - t0, 1))
 
 
 def main():
@@ -238,7 +254,9 @@ def main():
     p.add_argument('--report', default=os.path.join(ROOT, 'hw_report.txt'))
     a = p.parse_args()
 
-    out(f'mini-scope hw_check  {datetime.datetime.now():%Y-%m-%d %H:%M}  port {a.port}, {a.baud} baud')
+    port = 'SIM' if a.port == 'SIM' else 'COM'      # the file holds the kind of port, not its name
+    out(f'mini-scope hw_check  {datetime.datetime.now():%Y-%m-%d %H:%M}  port {a.port}, {a.baud} baud',
+        f'mini-scope hw_check  {datetime.datetime.now():%Y-%m-%d %H:%M}  port {port}, {a.baud} baud')
     out(f'Python {platform.python_version()}, {platform.platform()}')
     if a.loopback:
         loopback(a.port, a.baud)
@@ -248,6 +266,8 @@ def main():
     out(f'Result: {results.count("OK")} OK, {results.count("WARN")} WARN, {results.count("FAIL")} FAIL')
     with open(a.report, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
+    with open(os.path.splitext(a.report)[0] + '.json', 'w', encoding='utf-8') as f:
+        json.dump(dict(port=port, baud=a.baud, python=platform.python_version(), checks=checks), f, indent=1)
     print(f'Report written to {os.path.abspath(a.report)}')
     sys.exit(1 if 'FAIL' in results else 0)
 
@@ -259,9 +279,13 @@ def run_checks(a):
         out('ELF: none, PC model')
     elif os.path.exists(a.elf):
         syms = g.load_symbols(a.elf)
-        out(f'ELF: {a.elf}, built {datetime.datetime.fromtimestamp(os.path.getmtime(a.elf)):%Y-%m-%d %H:%M}')
+        built = datetime.datetime.fromtimestamp(os.path.getmtime(a.elf))
+        out(f'ELF: {a.elf}, built {built:%Y-%m-%d %H:%M}',
+            f'ELF: {"test.X production" if os.path.abspath(a.elf) == os.path.abspath(ELF) else "custom ELF"}, '
+            f'built {built:%Y-%m-%d %H:%M}')
     else:
-        out(f'ELF: {a.elf} not found, checks with the demo variables are skipped')
+        out(f'ELF: {a.elf} not found, checks with the demo variables are skipped',
+            'ELF: not found, checks with the demo variables are skipped')
     counter = (syms['counter'][0], 's32') if 'counter' in syms else None
     ramp = (syms['ramp'][0], 'u16') if 'ramp' in syms else None
     out()
@@ -271,7 +295,8 @@ def run_checks(a):
         return
     if baud != a.baud:
         result('FAIL', 'ping', f'answers at {baud} instead of {a.baud} baud: '
-               f'the real FP is {baud / a.baud:.3g} x SCOPE_FP_HZ', 'TROUBLESHOOTING.md 4.3')
+               f'the real FP is {baud / a.baud:.3g} x SCOPE_FP_HZ', 'TROUBLESHOOTING.md 4.3',
+               fp_factor=round(baud / a.baud, 3))
     else:
         result('OK', 'ping', f'SCP1, capture buffer {sc.capbuf} bytes, max. {sc.max_ch} channels')
     try:

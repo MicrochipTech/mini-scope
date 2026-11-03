@@ -1,0 +1,48 @@
+symbols: motor 0x235c startup 0x2376 tune_alive 0x100a
+--- good start, ramp_rate 100
+  +   0 ms  state 0 -> 1  speed      0  iq     0  fault 0
+  + 100 ms  state 1 -> 2  speed      0  iq   400  fault 0
+  + 160 ms  state 2 -> 3  speed    600  iq   400  fault 0
+  + 337 ms  state 3 -> 0  speed   1476  iq     0  fault 0
+  speed 0 after 40 ms in state 0
+  max iq 400, final fault 0, samples 567, lost 0, bad 5
+--- failing start, ramp_rate 400
+  +   0 ms  state 0 -> 1  speed      0  iq     0  fault 0
+  + 100 ms  state 1 -> 2  speed      0  iq   400  fault 0
+  + 101 ms  state 2 -> 0  speed     40  iq     0  fault 2
+  speed 0 after 5 ms in state 0
+  max iq 400, final fault 0, samples 358, lost 0, bad 5
+--- good start, ramp_rate 200
+  +   0 ms  state 0 -> 1  speed      0  iq     0  fault 0
+  + 100 ms  state 1 -> 2  speed      0  iq   400  fault 0
+  + 130 ms  state 2 -> 3  speed    600  iq   400  fault 0
+  + 225 ms  state 3 -> 0  speed   1436  iq     0  fault 0
+  speed 0 after 39 ms in state 0
+  max iq 400, final fault 0, samples 460, lost 0, bad 5
+--- good start, ramp_rate 50
+  +   0 ms  state 0 -> 1  speed      0  iq     0  fault 0
+  + 100 ms  state 1 -> 2  speed      0  iq   400  fault 0
+  + 220 ms  state 2 -> 3  speed    600  iq   400  fault 0
+  + 367 ms  state 3 -> 0  speed   1466  iq     0  fault 0
+  speed 0 after 40 ms in state 0
+  max iq 400, final fault 0, samples 564, lost 0, bad 5
+--- failing start, handover 150
+  +   0 ms  state 0 -> 1  speed      0  iq     0  fault 0
+  + 100 ms  state 1 -> 2  speed      0  iq   400  fault 0
+  + 115 ms  state 2 -> 0  speed    150  iq     0  fault 4
+  speed 0 after 12 ms in state 0
+  max iq 400, final fault 0, samples 373, lost 0, bad 5
+--- failing start, align 200
+  +   0 ms  state 0 -> 1  speed      0  iq     0  fault 0
+  + 100 ms  state 1 -> 0  speed      0  iq     0  fault 3
+  speed 0 after 0 ms in state 0
+  max iq 200, final fault 0, samples 368, lost 0, bad 5
+--- good start again (deterministic?)
+  +   0 ms  state 0 -> 1  speed      0  iq     0  fault 0
+  + 100 ms  state 1 -> 2  speed      0  iq   400  fault 0
+  + 160 ms  state 2 -> 3  speed    600  iq   400  fault 0
+  + 332 ms  state 3 -> 0  speed   1474  iq     0  fault 0
+  speed 0 after 40 ms in state 0
+  max iq 400, final fault 0, samples 555, lost 0, bad 5
+--- current step 500 at standstill, 1 ms samples (ref, current, kp)
+   [(0, 0, 0), (6, 0, 0), (12, 0, 0), (18, 0, 0), (24, 0, 0), (30, 0, 0), (36, 0, 0), (42, 0, 0), (48, 0, 0), (54, 500, 480), (60, 500, 494), (66, 500, 499), (72, 500, 499), (78, 500, 499), (84, 500, 503), (90, 500, 500), (96, 500, 500), (102, 500, 500), (108, 500, 500), (114, 500, 500)]

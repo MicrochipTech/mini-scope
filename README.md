@@ -18,13 +18,35 @@ Two modes:
 
 ![Capture](docs/capture.png)
 
+**Tuning scripts.** A tuning script is a short Python file, written to read like C.
+It sets parameters of your firmware, measures what the drive does and compares the
+results in a table, for example the ramp rate of a startup or the gains of a control
+loop. It runs from the **Script** tab of the GUI or from `tools/run_script.py`. Three
+scripts come with mini-scope in [`scripts/`](scripts/), and
+[SCRIPTING.md](SCRIPTING.md) explains how to adapt them. The block diagram
+[docs/tooling_diagram.png](docs/tooling_diagram.png) shows how the parts fit together.
+
+**Status:** mini-scope and the scripts have run in a PC model and in the MPLAB X
+simulator only. **They have never run on real hardware.** Every result and figure in
+these documents rests on simulation.
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `firmware/scope.c`, `scope.h` | module for the controller (register level, no MCC) |
 | `firmware/example_main.c` | minimal example with clock setup and demo variables |
-| `gui/scope_gui.py` | PC user interface (NiceGUI in the browser) |
+| `gui/scope_gui.py` | PC user interface (NiceGUI in the browser): the Scope tab, and the `Scope` class, the protocol client |
+| `gui/script_tab.py` | the Script tab: select, check, probe and run a tuning script, results table |
+| `gui/tune_api.py` | the functions a tuning script calls, the safe end and the heartbeat |
+| `gui/tune_check.py` | Check of a script: compile, names against the ELF, dry run; the rule codes |
+| `gui/elf_vars.py` | resolves names such as `motor.run` through the debug information of the ELF |
+| `firmware/tune_block.h` | heartbeat and build id for the tuning scripts, see SCRIPTING.md section 6 |
+| `firmware/tune_model.h` | virtual motor of the example firmware, so that the scripts run without hardware |
+| `firmware/load_main.c` | load test firmware, used only for the measurement in `docs/evidence/M7b.md` |
+| `scripts/` | the tuning scripts `tune_startup.py`, `tune_speed.py` and `tune_current.py` |
+| `SCRIPTING.md` | how to write and adapt tuning scripts, function reference, rule codes |
+| `tools/run_script.py` | runs, checks (`--check`) or probes (`--probe`) a tuning script without the GUI, writes `run_report.txt` |
 | `start_gui.bat` | starts the user interface, sets up Python on the first start |
 | `start_sim.bat` | builds `test.X` for the simulator and starts the user interface |
 | `USER_GUIDE.md` | user guide |
@@ -35,9 +57,11 @@ Two modes:
 | `tools/mdb_serial.py` | connects the GUI to the firmware in the MPLAB X simulator |
 | `tools/doctor.py` | checks the PC and the project settings, writes `doctor_report.txt` |
 | `tools/hw_check.py` | checks mini-scope on the board (ping, clock, rates, capture, reset), writes `hw_report.txt` |
-| `tools/make_pdfs.py` | builds PDF versions of the three guides (needs pandoc and Edge) |
+| `tools/report.py` | writes `mini-scope_report.txt`, the one file to send when you ask for help: versions, check results and numbers from an allow list, no paths or names; read it first, it sends nothing |
+| `tools/make_pdfs.py` | builds PDF versions of the four guides (needs pandoc and Edge) |
 | `CLAUDE.md` | notes for Claude Code, for help with getting mini-scope running on your board |
-| `tests/` | PC model: `scope.c` built as a DLL, plus a protocol test |
+| `tests/` | PC model (`scope.c` and the virtual motor built as a DLL) and the tests, see "Tests" below |
+| `docs/` | pictures, `tooling_diagram.png`, `TUNING_PLAN.md` (record of how the scripts were built), `evidence/` (test records) |
 | `LICENSE.txt` | license |
 
 ## Adding the firmware
@@ -51,7 +75,7 @@ Two modes:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `SCOPE_FP_HZ` | 32000000 | peripheral clock FP = FOSC/2 |
+| `SCOPE_FP_HZ` | 32000000 | peripheral clock FP = FOSC/2. `example_main.c` sets FOSC 64 MHz with `POST2DIV = 1`, because FOSC = FPLLO / 2 |
 | `SCOPE_BAUD` | 115200 | baud rate, +0.6 % at 32 MHz. The stream carries about 11 kB/s; a full capture buffer takes about 0.4 s to transfer. |
 | `SCOPE_UART` | 1 | which UART: 1, 2 or 3, see below |
 | `SCOPE_TIMER` | `SCOPE_T1` | sample clock: `SCOPE_T1`, `SCOPE_CCP1` … `SCOPE_CCP4` or `SCOPE_NONE`, see below |
@@ -190,6 +214,9 @@ takes about a minute; later starts take a few seconds. Set `MINISCOPE_VENV`
 to put the environment somewhere else. The browser opens at
 http://localhost:8080.
 
+Below the port and ELF rows the page has two tabs: **Scope** (the steps below)
+and **Script** (tuning scripts, see [SCRIPTING.md](SCRIPTING.md)).
+
 1. Select the port and click **Connect**. The status line shows whether the
    target responds; the button then reads **Disconnect**.
 2. Click **Browse …** and pick the ELF file, or enter its path and click
@@ -204,7 +231,7 @@ http://localhost:8080.
 4. Select the mode, enter the sample period in µs and click **Start**. Capture
    mode adds trigger channel (number in the channel list, from 0), edge,
    threshold as a raw value and pretrigger. **Auto re-arm** re-arms after
-   every capture.
+   every capture. Capture periods below 10 µs are refused, see Limitations.
    In stream mode, an orange warning appears when the sample period is too
    short for the UART, with the shortest period that still fits.
 5. **Write variable** (next to the channels): one row per variable, set up
@@ -269,11 +296,46 @@ modelled registers as a DLL. Data arrives in real time.
 ```
 gcc -O2 -shared -Itests/mock -Ifirmware -o tests/sim.dll tests/mock/sim.c firmware/scope.c
 start_gui.bat --sim                      (port "SIM", leave the ELF field empty, Load)
-.venv\Scripts\python tests\test_protocol.py   (34 automatic checks)
+.venv\Scripts\python tests\test_protocol.py   (56 automatic checks)
+.venv\Scripts\python tools\hw_check.py --port SIM --secs 5
 ```
+
+The tuning scripts run on both ports, also without the GUI:
+
+```
+.venv\Scripts\python tools\run_script.py --check scripts\tune_startup.py
+.venv\Scripts\python tools\run_script.py --probe --port SIM scripts\tune_startup.py
+.venv\Scripts\python tools\run_script.py --port SIM scripts\tune_startup.py
+.venv\Scripts\python tools\run_script.py --port MDB --elf test.X\dist\sim\production\test.X.production.elf scripts\tune_startup.py
+```
+
+Each run gets a folder in `runs\` with the table, the traces, a summary picture and,
+for a confirmed result, `tuning.h`. On MDB, `tune_startup.py` takes about 3.5 minutes.
 
 The paths to MPLAB X v6.35, XC-DSC v3.30 and the DFP are at the top of
 `tools/mdb_serial.py` and in `start_sim.bat`.
+
+## Tests
+
+All tests run from the project folder as `.venv\Scripts\python tests\<name>.py`.
+Most need `tests/sim.dll`, built with the `gcc` line above. Each prints one line
+per check (OK or FAIL) and exits with 1 if a check failed.
+
+| Test | What it checks | Needs |
+|---|---|---|
+| `test_protocol.py` | the protocol of `scope.c` through the `Scope` class | `sim.dll` |
+| `test_script.py` | `gui/tune_api.py`: limits, abort, safe end, heartbeat, capture | `sim.dll` |
+| `test_check.py` | Check, stages 1 to 3, one case per rule | `sim.dll` |
+| `test_probe.py` | the probe (stage 4) | `sim.dll` |
+| `test_block.py` | `tune_block.h`: build id and heartbeat | `sim.dll`, gcc |
+| `test_elf_vars.py` | names through the debug information, against `tests/fixtures/vars.elf` | nothing else |
+| `test_report.py` | no user data reaches the report files | nothing else |
+| `test_adapt.py` | adapted scripts on a second model with other names and inverted logic, one case per rule code | `sim.dll`, gcc |
+| `test_faults.py` | faults of the link, the port, the target and the script | `sim.dll` |
+| `test_mdb_noanswer.py` | a silent simulator ends `hw_check.py` and `run_script.py` with a message | `sim.dll` |
+| `test_gui.py` | the GUI in a headless browser on SIM; writes screenshots to `docs/evidence/m4/` | `sim.dll`, `pip install -r tests/requirements-dev.txt` |
+| `test_mdb_close.py` | closing the simulator ends all its processes | MPLAB X, a `sim` build of `test.X` |
+| `test_gui_mdb.py` | the GUI and the scripts in the simulator, about 20 minutes | MPLAB X, a `sim` build, playwright, `sim.dll` |
 
 ## What `scope_init()` configures
 
@@ -290,7 +352,7 @@ in your own code.
 
 Checked in the disassembly of the linked ELF (`xc-dsc-objdump`) against the
 data sheet and against MCC-generated code for the dsPIC33CK
-(`microchip-pic-avr-examples/dspic33ck-lvmc-x2cscope-blinky` for the UART,
+(a dsPIC33CK LVMC example from `microchip-pic-avr-examples` for the UART,
 `mclv2-mchv2-dspic33ck256mp508-an1160` for the SCCP timer). All 18
 combinations of UART and sample clock compile and link without warnings.
 UART1 with Timer1 and UART2 with SCCP1 have run in the MPLAB X simulator.
@@ -320,6 +382,12 @@ UART1 with Timer1 and UART2 with SCCP1 have run in the MPLAB X simulator.
   immediately on the hardware.
 - The trigger compares raw integer values; an f32 channel cannot be the
   trigger.
+- Capture periods below 10 µs are refused by the GUI and the scripts. Measured in
+  the simulator, a capture holds its period down to 15 µs (32 MIPS) without other
+  interrupts, and down to 50 µs under a 60 % control interrupt above mini-scope.
+  Below that it returns a full buffer with wrong spacing and no error. At 1 to 2 µs
+  it never ends and the target needs a reset. USER_GUIDE.md section 6.4 has all
+  figures. They are not proven on a chip.
 - Very short sample periods (a few µs) load the CPU noticeably, because every
   sample is an interrupt. In a motor control application, set
   `SCOPE_TIMER = SCOPE_NONE` and call `scope_sample()` from the control ISR.
@@ -332,8 +400,15 @@ UART1 with Timer1 and UART2 with SCCP1 have run in the MPLAB X simulator.
   stream rate, buffer sizes and the GUI are tested with the original
   `scope.c`.
 - **MPLAB X simulator:** stream and capture with trigger run with the
-  compiled firmware from `test.X`, through the GUI.
-- **Hardware:** **the module has not yet run on real hardware.**
+  compiled firmware from `test.X`, through the GUI. The three tuning scripts run
+  there to the end and give the same tables as on the PC model.
+- **Load:** in the simulator, under a 60 % control interrupt above mini-scope, a
+  1 ms stream of 4 channels lost no frame. mini-scope used 4.0 % of the cycles at
+  32 MIPS and 1.3 % at 100 MIPS.
+- **Hardware:** **the module and the scripts have not yet run on real hardware.**
+  Not proven: the clock wait loops and the real PLL frequency, the UART on the
+  wire, the hardware TX interrupt, the watchdog, timing under real interrupt load,
+  and every script on a real drive.
 
 Two points only showed up in the simulator:
 
@@ -351,7 +426,8 @@ Code, tests and documentation were developed with the help of an AI coding
 assistant (Claude by Anthropic). The register settings were checked against the data sheet DS70005399D and against
 MCC-generated code that runs on dsPIC33CK silicon, and the firmware was
 exercised in the MPLAB X simulator and in a PC model, as described above.
-It has not yet run on real hardware; please report any issue.
+It has not yet run on real hardware; please report any issue. Send only the file
+`tools/report.py` writes (TROUBLESHOOTING.md section 9), after reading it.
 
 ## License
 

@@ -1,0 +1,6 @@
+states seen [0, 1, 2, 3] samples 822 lost 0
+{'ld_fast_max': 76, 'ld_slow_max': 180, 'ld_fast_last': 75, 'ld_slow_last': 179, 'ld_sum': 1399573, 'ld_n': 17196, 'ld_slow_n': 1719, 'ld_s0': 115, 'ld_s1': 116, 'ld_s2': 126, 'ld_s3': 180, 'scope_overflows': 0}
+passes 17196 (slow 1719)
+fast pass max 304 cycles, slow pass max 720 cycles, last 300 / 716
+slow pass max by state after the pass (cycles): 0: 460, 1: 464, 2: 504, 3: 720
+average 326 cycles = 10.2 % of 100 us, worst case pass 22.5 %

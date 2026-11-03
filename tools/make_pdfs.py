@@ -1,4 +1,4 @@
-"""make_pdfs.py - builds USER_GUIDE.pdf, SIMULATOR.pdf and TROUBLESHOOTING.pdf from the .md files.
+"""make_pdfs.py - builds USER_GUIDE.pdf, SIMULATOR.pdf, TROUBLESHOOTING.pdf and SCRIPTING.pdf from the .md files.
 
     python tools\\make_pdfs.py
 
@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-DOCS = ('USER_GUIDE', 'SIMULATOR', 'TROUBLESHOOTING')
+DOCS = ('USER_GUIDE', 'SIMULATOR', 'TROUBLESHOOTING', 'SCRIPTING')
 EDGE = r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 
 

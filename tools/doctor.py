@@ -4,7 +4,9 @@
 
 Looks at: Python and packages, MPLAB X / XC-DSC / device pack, the test.X
 build, the effective settings of scope.h (pins, clock, baud rate) and the COM
-ports. Writes the report to the console and to doctor_report.txt.
+ports. Writes the report to the console and to doctor_report.txt. The console
+may show where things were found; the file holds no path, user name or machine
+name, so you can read it and send it (tools/report.py makes the file to send).
 """
 import datetime
 import glob
@@ -21,14 +23,16 @@ FAMILY = re.compile(r'DSPIC33CK(32|64)MC10[2-6]$', re.I)
 lines, results = [], []
 
 
-def out(text=''):
+def out(text='', rep=True):
+    """Console and report file. rep: the text for the file if it differs (a string), or False to keep it off."""
     print(text, flush=True)
-    lines.append(text)
+    if rep is not False:
+        lines.append(text if rep is True else rep)
 
 
-def result(status, name, detail, hint=''):
+def result(status, name, detail, hint='', rep=True):
     results.append(status)
-    out(f'{status:4}  {name}: {detail}')
+    out(f'{status:4}  {name}: {detail}', rep if rep is True else f'{status:4}  {name}: {rep}')
     if hint and status != 'OK':
         out(f'      -> {hint}')
 
@@ -41,7 +45,7 @@ def read(path):
 def check_python():
     v = sys.version_info
     result('OK' if v >= (3, 9) else 'FAIL', 'Python', f'{platform.python_version()} ({sys.executable})',
-           'Python 3.9 or newer is needed')
+           'Python 3.9 or newer is needed', rep=platform.python_version())
     missing = []
     for mod in ('numpy', 'serial', 'nicegui', 'elftools'):
         try:
@@ -136,18 +140,23 @@ def check_settings(conf):
            f'BRG {brg}, {err:+.1f} %', 'pick a baud rate that divides FP/4 better')
     tx, rx = num(d['SCOPE_TX_RP']), num(d['SCOPE_RX_RP'])
     out(f'      UART{d["SCOPE_UART"]}, timer {d["SCOPE_TIMER"]}, TX RP{tx}/{rp_name(tx)}, RX RP{rx}/{rp_name(rx)}'
-        + (f', project macros: {conf["macros"]}' if conf['macros'] else ''))
+        + (f', project macros: {conf["macros"]}' if conf['macros'] else ''),
+        f'      UART{d["SCOPE_UART"]}, timer {d["SCOPE_TIMER"]}, TX RP{tx}/{rp_name(tx)}, RX RP{rx}/{rp_name(rx)}')
 
     main = read(os.path.join(ROOT, 'firmware', 'example_main.c'))
     ics = re.search(r'#pragma config ICS\s*=\s*PGD(\d)', main)
     if ics and {tx, rx} & set(PGX[int(ics[1])]):
         result('WARN', 'pins', f'UART pins on ICSP channel {ics[1]} (ICS = PGD{ics[1]})',
                'only with a production build and the PICkit disconnected: TROUBLESHOOTING.md 1')
-    v = {k: int(x) for k, x in re.findall(r'_(PLLPRE|PLLFBDIV|POST1DIV|POST2DIV)\s*=\s*(\d+)', main)}
+    v = {k: int(x) for k, x in re.findall(r'(?:_|bits\.)(PLLPRE|PLLFBDIV|POST1DIV|POST2DIV)\s*=\s*(\d+)', main)}
     if len(v) == 4:
-        fosc = 8e6 / v['PLLPRE'] * v['PLLFBDIV'] / v['POST1DIV'] / v['POST2DIV']
+        fosc = 8e6 / v['PLLPRE'] * v['PLLFBDIV'] / v['POST1DIV'] / v['POST2DIV'] / 2     # FOSC = FPLLO / 2
+        hint = 'SCOPE_FP_HZ must be FOSC/2'
+        if fosc == fp:
+            hint = (f'FP is half of SCOPE_FP_HZ: FOSC is FPLLO / 2, so POST2DIV = {v["POST2DIV"]} is probably '
+                    'set as if FOSC were FPLLO: TROUBLESHOOTING.md 4.3')
         result('OK' if fosc / 2 == fp else 'FAIL', 'clock', f'example_main.c: FRC 8 MHz -> FOSC {fosc / 1e6:g} MHz, '
-               f'FP {fosc / 2e6:g} MHz, SCOPE_FP_HZ {fp / 1e6:g} MHz', 'SCOPE_FP_HZ must be FOSC/2')
+               f'FP {fosc / 2e6:g} MHz, SCOPE_FP_HZ {fp / 1e6:g} MHz', hint)
 
 
 def check_ports():
@@ -166,11 +175,12 @@ def check_ports():
             state = 'free'
         except serial.SerialException:
             state = 'BUSY (GUI, terminal or MPLAB Data Visualizer?)'
-        out(f'      {p.device}: {p.description} [{p.hwid}] {state}')
+        out(f'      {p.device}: {p.description} [{p.hwid}] {state}', f'      COM port: {state.split(" ")[0]}')
 
 
 def main():
-    out(f'mini-scope doctor  {datetime.datetime.now():%Y-%m-%d %H:%M}  {ROOT}')
+    out(f'mini-scope doctor  {datetime.datetime.now():%Y-%m-%d %H:%M}  {ROOT}',
+        f'mini-scope doctor  {datetime.datetime.now():%Y-%m-%d %H:%M}')
     out(f'{platform.platform()}')
     out()
     confs = conf_xml()
@@ -179,7 +189,7 @@ def main():
         try:
             step()
         except Exception as e:      # noqa: BLE001 - one broken check must not hide the others
-            result('FAIL', 'doctor', f'check failed: {e!r}')
+            result('FAIL', 'doctor', f'check failed: {e!r}', rep=f'check failed: {type(e).__name__}')
     out()
     out(f'Result: {results.count("OK")} OK, {results.count("WARN")} WARN, {results.count("FAIL")} FAIL')
     path = os.path.join(ROOT, 'doctor_report.txt')

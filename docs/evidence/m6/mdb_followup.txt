@@ -1,0 +1,49 @@
+== one MDB, Scope directly (wall/target = wall clock seconds per target second; step None = the step outlasted the window)
+stream 1 ms, no writes: 1982.0 samples in 30.0 s: 15.1 wall/target
+stream 1 ms, a write each 4 s: 1699.0 samples in 24.0 s: 14.1 wall/target
+period 100 us wall 2.5 s extra 0: step None ms of 92 window; 0.0 wall/target; writes 0.00 0.00 s
+period 100 us wall 2.5 s extra 0: step None ms of 92 window; 0.0 wall/target; writes 0.00 0.00 s
+period 200 us wall 2.5 s extra 0: step 172.0 ms of 184 window; 14.5 wall/target; writes 0.00 0.00 s
+period 200 us wall 5.0 s extra 0: step None ms of 184 window; 0.0 wall/target; writes 0.00 0.00 s
+period 200 us wall 5.0 s extra 0: step None ms of 184 window; 0.0 wall/target; writes 0.00 0.00 s
+period 200 us wall 2.5 s extra 1: step 153.2 ms of 184 window; 16.3 wall/target; writes 0.00 0.00 s
+period 200 us wall 5.0 s extra 3: step None ms of 184 window; 0.0 wall/target; writes 0.00 0.00 s
+period 200 us wall 8.0 s extra 0: step None ms of 184 window; 0.0 wall/target; writes 0.00 0.00 s
+period 500 us wall 8.0 s extra 0: step None ms of 460 window; 0.0 wall/target; writes 0.00 0.00 s
+period 500 us wall 16.0 s extra 0: step None ms of 460 window; 0.0 wall/target; writes 0.00 0.00 s
+
+== tune_current.py, unchanged time_scale: results.csv
+kp,rise_us,overshoot_percent,status
+100,2500,3,ok
+200,1900,0,ok
+400,500,0,ok
+800,200,47,ok
+Wall clock of the run: 287.8 s (312.0 s with start-up)
+heartbeat: largest gap between two writes 6376 ms wall clock, 255 ms target time at scale 25; around a capture 6376 ms wall clock, 255 ms target time;
+
+== tune_current.py, capture_time_scale 100, run 1: results.csv
+kp,rise_us,overshoot_percent,status
+100,2500,3,ok
+200,1900,0,ok
+400,500,0,ok
+800,200,47,ok
+Wall clock of the run: 476.6 s (500.6 s with start-up)
+heartbeat: largest gap between two writes 6292 ms wall clock, 252 ms target time at scale 25; around a capture 6048 ms wall clock, 242 ms target time;
+
+== tune_current.py, capture_time_scale 100, run 2: results.csv
+kp,rise_us,overshoot_percent,status
+100,2500,3,ok
+200,1900,0,ok
+400,500,0,ok
+800,200,47,ok
+Wall clock of the run: 475.8 s (499.6 s with start-up)
+heartbeat: largest gap between two writes 6296 ms wall clock, 252 ms target time at scale 25; around a capture 6033 ms wall clock, 241 ms target time;
+
+== tune_current.py, capture_time_scale 100, run 3: results.csv
+kp,rise_us,overshoot_percent,status
+100,2500,3,ok
+200,1900,0,ok
+400,500,0,ok
+800,200,47,ok
+Wall clock of the run: 475.4 s (498.9 s with start-up)
+heartbeat: largest gap between two writes 6296 ms wall clock, 252 ms target time at scale 25; around a capture 6018 ms wall clock, 241 ms target time;
